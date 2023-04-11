@@ -1,33 +1,5 @@
-/*
- * SPDX-License-Identifier: BSD-3-Clause
- *
- * Copyright (c) 2022 Google LLC
- * Copyright (c) 2022 Intel Corporation
- *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *    may be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(C) 2022 Intel Corporation
  */
 
 #include "gve_ethdev.h"
@@ -170,14 +142,17 @@ gve_refill_dqo(struct gve_rx_queue *rxq)
 
 	diag = rte_pktmbuf_alloc_bulk(rxq->mpool, &rxq->sw_ring[0], rxq->nb_rx_desc);
 	if (diag < 0) {
+		rxq->stats.no_mbufs_bulk++;
 		for (i = 0; i < rxq->nb_rx_desc - 1; i++) {
 			nmb = rte_pktmbuf_alloc(rxq->mpool);
 			if (!nmb)
 				break;
 			rxq->sw_ring[i] = nmb;
 		}
-		if (i < rxq->nb_rx_desc - 1)
+		if (i < rxq->nb_rx_desc - 1) {
+			rxq->stats.no_mbufs += rxq->nb_rx_desc - 1 - i;
 			return -ENOMEM;
+		}
 	}
 
 	for (i = 0; i < rxq->nb_rx_desc; i++) {
@@ -397,7 +372,6 @@ gve_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->rx_offload_capa = 0;
 	dev_info->tx_offload_capa =
 		RTE_ETH_TX_OFFLOAD_MULTI_SEGS	|
-		RTE_ETH_TX_OFFLOAD_IPV4_CKSUM	|
 		RTE_ETH_TX_OFFLOAD_UDP_CKSUM	|
 		RTE_ETH_TX_OFFLOAD_TCP_CKSUM	|
 		RTE_ETH_TX_OFFLOAD_SCTP_CKSUM	|
@@ -445,9 +419,9 @@ gve_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 		if (txq == NULL)
 			continue;
 
-		stats->opackets += txq->packets;
-		stats->obytes += txq->bytes;
-		stats->oerrors += txq->errors;
+		stats->opackets += txq->stats.packets;
+		stats->obytes += txq->stats.bytes;
+		stats->oerrors += txq->stats.errors;
 	}
 
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
@@ -455,10 +429,10 @@ gve_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 		if (rxq == NULL)
 			continue;
 
-		stats->ipackets += rxq->packets;
-		stats->ibytes += rxq->bytes;
-		stats->ierrors += rxq->errors;
-		stats->rx_nombuf += rxq->no_mbufs;
+		stats->ipackets += rxq->stats.packets;
+		stats->ibytes += rxq->stats.bytes;
+		stats->ierrors += rxq->stats.errors;
+		stats->rx_nombuf += rxq->stats.no_mbufs;
 	}
 
 	return 0;
@@ -474,9 +448,7 @@ gve_dev_stats_reset(struct rte_eth_dev *dev)
 		if (txq == NULL)
 			continue;
 
-		txq->packets  = 0;
-		txq->bytes = 0;
-		txq->errors = 0;
+		memset(&txq->stats, 0, sizeof(txq->stats));
 	}
 
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
@@ -484,10 +456,7 @@ gve_dev_stats_reset(struct rte_eth_dev *dev)
 		if (rxq == NULL)
 			continue;
 
-		rxq->packets  = 0;
-		rxq->bytes = 0;
-		rxq->errors = 0;
-		rxq->no_mbufs = 0;
+		memset(&rxq->stats, 0, sizeof(rxq->stats));
 	}
 
 	return 0;
@@ -520,6 +489,118 @@ gve_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	return 0;
 }
 
+#define TX_QUEUE_STATS_OFFSET(x) offsetof(struct gve_tx_stats, x)
+#define RX_QUEUE_STATS_OFFSET(x) offsetof(struct gve_rx_stats, x)
+
+static const struct gve_xstats_name_offset tx_xstats_name_offset[] = {
+	{ "packets", TX_QUEUE_STATS_OFFSET(packets) },
+	{ "bytes",   TX_QUEUE_STATS_OFFSET(bytes) },
+	{ "errors",  TX_QUEUE_STATS_OFFSET(errors) },
+};
+
+static const struct gve_xstats_name_offset rx_xstats_name_offset[] = {
+	{ "packets",                RX_QUEUE_STATS_OFFSET(packets) },
+	{ "bytes",                  RX_QUEUE_STATS_OFFSET(bytes) },
+	{ "errors",                 RX_QUEUE_STATS_OFFSET(errors) },
+	{ "mbuf_alloc_errors",      RX_QUEUE_STATS_OFFSET(no_mbufs) },
+	{ "mbuf_alloc_errors_bulk", RX_QUEUE_STATS_OFFSET(no_mbufs_bulk) },
+};
+
+static int
+gve_xstats_count(struct rte_eth_dev *dev)
+{
+	uint16_t i, count = 0;
+
+	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		if (dev->data->tx_queues[i])
+			count += RTE_DIM(tx_xstats_name_offset);
+	}
+
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		if (dev->data->rx_queues[i])
+			count += RTE_DIM(rx_xstats_name_offset);
+	}
+
+	return count;
+}
+
+static int
+gve_xstats_get(struct rte_eth_dev *dev,
+			struct rte_eth_xstat *xstats,
+			unsigned int size)
+{
+	uint16_t i, j, count = gve_xstats_count(dev);
+	const char *stats;
+
+	if (xstats == NULL || size < count)
+		return count;
+
+	count = 0;
+
+	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		const struct gve_tx_queue *txq = dev->data->tx_queues[i];
+		if (txq == NULL)
+			continue;
+
+		stats = (const char *)&txq->stats;
+		for (j = 0; j < RTE_DIM(tx_xstats_name_offset); j++, count++) {
+			xstats[count].id = count;
+			xstats[count].value = *(const uint64_t *)
+				(stats + tx_xstats_name_offset[j].offset);
+		}
+	}
+
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		const struct gve_rx_queue *rxq = dev->data->rx_queues[i];
+		if (rxq == NULL)
+			continue;
+
+		stats = (const char *)&rxq->stats;
+		for (j = 0; j < RTE_DIM(rx_xstats_name_offset); j++, count++) {
+			xstats[count].id = count;
+			xstats[count].value = *(const uint64_t *)
+				(stats + rx_xstats_name_offset[j].offset);
+		}
+	}
+
+	return count;
+}
+
+static int
+gve_xstats_get_names(struct rte_eth_dev *dev,
+			struct rte_eth_xstat_name *xstats_names,
+			unsigned int size)
+{
+	uint16_t i, j, count = gve_xstats_count(dev);
+
+	if (xstats_names == NULL || size < count)
+		return count;
+
+	count = 0;
+
+	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		if (dev->data->tx_queues[i] == NULL)
+			continue;
+
+		for (j = 0; j < RTE_DIM(tx_xstats_name_offset); j++)
+			snprintf(xstats_names[count++].name,
+				 RTE_ETH_XSTATS_NAME_SIZE,
+				 "tx_q%u_%s", i, tx_xstats_name_offset[j].name);
+	}
+
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		if (dev->data->rx_queues[i] == NULL)
+			continue;
+
+		for (j = 0; j < RTE_DIM(rx_xstats_name_offset); j++)
+			snprintf(xstats_names[count++].name,
+				 RTE_ETH_XSTATS_NAME_SIZE,
+				 "rx_q%u_%s", i, rx_xstats_name_offset[j].name);
+	}
+
+	return count;
+}
+
 static const struct eth_dev_ops gve_eth_dev_ops = {
 	.dev_configure        = gve_dev_configure,
 	.dev_start            = gve_dev_start,
@@ -534,6 +615,8 @@ static const struct eth_dev_ops gve_eth_dev_ops = {
 	.stats_get            = gve_dev_stats_get,
 	.stats_reset          = gve_dev_stats_reset,
 	.mtu_set              = gve_dev_mtu_set,
+	.xstats_get           = gve_xstats_get,
+	.xstats_get_names     = gve_xstats_get_names,
 };
 
 static const struct eth_dev_ops gve_eth_dev_ops_dqo = {
@@ -550,6 +633,8 @@ static const struct eth_dev_ops gve_eth_dev_ops_dqo = {
 	.stats_get            = gve_dev_stats_get,
 	.stats_reset          = gve_dev_stats_reset,
 	.mtu_set              = gve_dev_mtu_set,
+	.xstats_get           = gve_xstats_get,
+	.xstats_get_names     = gve_xstats_get_names,
 };
 
 static void

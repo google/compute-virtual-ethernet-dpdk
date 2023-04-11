@@ -1,33 +1,5 @@
-/*
- * SPDX-License-Identifier: BSD-3-Clause
- *
- * Copyright (c) 2022 Google LLC
- * Copyright (c) 2022 Intel Corporation
- *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *    may be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(C) 2022 Intel Corporation
  */
 
 #include "gve_ethdev.h"
@@ -50,6 +22,7 @@ gve_rx_refill(struct gve_rx_queue *rxq)
 	if (nb_alloc <= rxq->nb_avail) {
 		diag = rte_pktmbuf_alloc_bulk(rxq->mpool, &rxq->sw_ring[idx], nb_alloc);
 		if (diag < 0) {
+			rxq->stats.no_mbufs_bulk++;
 			for (i = 0; i < nb_alloc; i++) {
 				nmb = rte_pktmbuf_alloc(rxq->mpool);
 				if (!nmb)
@@ -57,7 +30,7 @@ gve_rx_refill(struct gve_rx_queue *rxq)
 				rxq->sw_ring[idx + i] = nmb;
 			}
 			if (i != nb_alloc) {
-				rxq->no_mbufs += nb_alloc - i;
+				rxq->stats.no_mbufs += nb_alloc - i;
 				nb_alloc = i;
 			}
 		}
@@ -85,13 +58,17 @@ gve_rx_refill(struct gve_rx_queue *rxq)
 			nb_alloc = rxq->nb_rx_desc - idx;
 		diag = rte_pktmbuf_alloc_bulk(rxq->mpool, &rxq->sw_ring[idx], nb_alloc);
 		if (diag < 0) {
+			rxq->stats.no_mbufs_bulk++;
 			for (i = 0; i < nb_alloc; i++) {
 				nmb = rte_pktmbuf_alloc(rxq->mpool);
 				if (!nmb)
 					break;
 				rxq->sw_ring[idx + i] = nmb;
 			}
-			nb_alloc = i;
+			if (i != nb_alloc) {
+				rxq->stats.no_mbufs += nb_alloc - i;
+				nb_alloc = i;
+			}
 		}
 		rxq->nb_avail -= nb_alloc;
 		next_avail += nb_alloc;
@@ -166,7 +143,7 @@ gve_rx(struct gve_rx_queue *rxq, volatile struct gve_rx_desc *rxd, uint16_t rx_i
 
 	if (rxd->flags_seq & GVE_RXF_ERR) {
 		ctx->drop_pkt = true;
-		rxq->errors++;
+		rxq->stats.errors++;
 		goto finish_frag;
 	}
 
@@ -175,7 +152,7 @@ gve_rx(struct gve_rx_queue *rxq, volatile struct gve_rx_desc *rxd, uint16_t rx_i
 
 	rxe = rxq->sw_ring[rx_id];
 	gve_rx_mbuf(rxq, rxe, frag_size, rx_id);
-	rxq->bytes += frag_size;
+	rxq->stats.bytes += frag_size;
 
 	if (is_first_frag) {
 		if (rxd->flags_seq & GVE_RXF_TCP)
@@ -244,7 +221,7 @@ gve_rx_burst(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		gve_rx_refill(rxq);
 
 	if (nb_rx)
-		rxq->packets += nb_rx;
+		rxq->stats.packets += nb_rx;
 
 	return nb_rx;
 }

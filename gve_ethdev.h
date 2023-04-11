@@ -1,33 +1,5 @@
-/*
- * SPDX-License-Identifier: BSD-3-Clause
- *
- * Copyright (c) 2022 Google LLC
- * Copyright (c) 2022 Intel Corporation
- *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *    may be used to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(C) 2022 Intel Corporation
  */
 
 #ifndef _GVE_ETHDEV_H_
@@ -110,6 +82,25 @@ struct gve_tx_iovec {
 	uint32_t iov_len;
 };
 
+struct gve_tx_stats {
+	uint64_t packets;
+	uint64_t bytes;
+	uint64_t errors;
+};
+
+struct gve_rx_stats {
+	uint64_t packets;
+	uint64_t bytes;
+	uint64_t errors;
+	uint64_t no_mbufs;
+	uint64_t no_mbufs_bulk;
+};
+
+struct gve_xstats_name_offset {
+	char name[RTE_ETH_XSTATS_NAME_SIZE];
+	unsigned int offset;
+};
+
 struct gve_tx_queue {
 	volatile union gve_tx_desc *tx_desc_ring;
 	const struct rte_memzone *mz;
@@ -138,9 +129,7 @@ struct gve_tx_queue {
 	struct gve_tx_iovec *iov_ring;
 
 	/* stats items */
-	uint64_t packets;
-	uint64_t bytes;
-	uint64_t errors;
+	struct gve_tx_stats stats;
 
 	uint16_t port_id;
 	uint16_t queue_id;
@@ -202,10 +191,7 @@ struct gve_rx_queue {
 	struct gve_queue_page_list *qpl;
 
 	/* stats items */
-	uint64_t packets;
-	uint64_t bytes;
-	uint64_t errors;
-	uint64_t no_mbufs;
+	struct gve_rx_stats stats;
 
 	struct gve_priv *hw;
 	const struct rte_memzone *qres_mz;
