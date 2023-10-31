@@ -27,7 +27,7 @@
 #define PCI_MSIX_FLAGS		2	/* Message Control */
 #define PCI_MSIX_FLAGS_QSIZE	0x07FF	/* Table size */
 
-#define GVE_DEFAULT_RX_FREE_THRESH  512
+#define GVE_DEFAULT_RX_FREE_THRESH   64
 #define GVE_DEFAULT_TX_FREE_THRESH   32
 #define GVE_DEFAULT_TX_RS_THRESH     32
 #define GVE_TX_MAX_FREE_SZ          512
@@ -265,7 +265,6 @@ struct gve_priv {
 	uint32_t adminq_report_link_speed_cnt;
 	uint32_t adminq_get_ptype_map_cnt;
 	uint32_t adminq_verify_driver_compatibility_cnt;
-
 	volatile uint32_t state_flags;
 
 	/* Gvnic device link speed from hypervisor. */
@@ -364,6 +363,18 @@ gve_tx_queue_release(struct rte_eth_dev *dev, uint16_t qid);
 void
 gve_rx_queue_release(struct rte_eth_dev *dev, uint16_t qid);
 
+int
+gve_tx_queue_start(struct rte_eth_dev *dev, uint16_t tx_queue_id);
+
+int
+gve_rx_queue_start(struct rte_eth_dev *dev, uint16_t rx_queue_id);
+
+int
+gve_tx_queue_stop(struct rte_eth_dev *dev, uint16_t tx_queue_id);
+
+int
+gve_rx_queue_stop(struct rte_eth_dev *dev, uint16_t rx_queue_id);
+
 void
 gve_stop_tx_queues(struct rte_eth_dev *dev);
 
@@ -375,6 +386,12 @@ gve_rx_burst(void *rxq, struct rte_mbuf **rx_pkts, uint16_t nb_pkts);
 
 uint16_t
 gve_tx_burst(void *txq, struct rte_mbuf **tx_pkts, uint16_t nb_pkts);
+
+void
+gve_set_rx_function(struct rte_eth_dev *dev);
+
+void
+gve_set_tx_function(struct rte_eth_dev *dev);
 
 /* Below functions are used for DQO */
 
@@ -394,6 +411,18 @@ gve_tx_queue_release_dqo(struct rte_eth_dev *dev, uint16_t qid);
 void
 gve_rx_queue_release_dqo(struct rte_eth_dev *dev, uint16_t qid);
 
+int
+gve_rx_queue_start_dqo(struct rte_eth_dev *dev, uint16_t rx_queue_id);
+
+int
+gve_tx_queue_start_dqo(struct rte_eth_dev *dev, uint16_t tx_queue_id);
+
+int
+gve_rx_queue_stop_dqo(struct rte_eth_dev *dev, uint16_t rx_queue_id);
+
+int
+gve_tx_queue_stop_dqo(struct rte_eth_dev *dev, uint16_t tx_queue_id);
+
 void
 gve_stop_tx_queues_dqo(struct rte_eth_dev *dev);
 
@@ -405,5 +434,11 @@ gve_rx_burst_dqo(void *rxq, struct rte_mbuf **rx_pkts, uint16_t nb_pkts);
 
 uint16_t
 gve_tx_burst_dqo(void *txq, struct rte_mbuf **tx_pkts, uint16_t nb_pkts);
+
+void
+gve_set_rx_function_dqo(struct rte_eth_dev *dev);
+
+void
+gve_set_tx_function_dqo(struct rte_eth_dev *dev);
 
 #endif /* _GVE_ETHDEV_H_ */

@@ -98,81 +98,6 @@ gve_dev_configure(struct rte_eth_dev *dev)
 }
 
 static int
-gve_refill_pages(struct gve_rx_queue *rxq)
-{
-	struct rte_mbuf *nmb;
-	uint16_t i;
-	int diag;
-
-	diag = rte_pktmbuf_alloc_bulk(rxq->mpool, &rxq->sw_ring[0], rxq->nb_rx_desc);
-	if (diag < 0) {
-		for (i = 0; i < rxq->nb_rx_desc - 1; i++) {
-			nmb = rte_pktmbuf_alloc(rxq->mpool);
-			if (!nmb)
-				break;
-			rxq->sw_ring[i] = nmb;
-		}
-		if (i < rxq->nb_rx_desc - 1)
-			return -ENOMEM;
-	}
-	rxq->nb_avail = 0;
-	rxq->next_avail = rxq->nb_rx_desc - 1;
-
-	for (i = 0; i < rxq->nb_rx_desc; i++) {
-		if (rxq->is_gqi_qpl) {
-			rxq->rx_data_ring[i].addr = rte_cpu_to_be_64(i * PAGE_SIZE);
-		} else {
-			if (i == rxq->nb_rx_desc - 1)
-				break;
-			nmb = rxq->sw_ring[i];
-			rxq->rx_data_ring[i].addr = rte_cpu_to_be_64(rte_mbuf_data_iova(nmb));
-		}
-	}
-
-	rte_write32(rte_cpu_to_be_32(rxq->next_avail), rxq->qrx_tail);
-
-	return 0;
-}
-
-static int
-gve_refill_dqo(struct gve_rx_queue *rxq)
-{
-	struct rte_mbuf *nmb;
-	uint16_t i;
-	int diag;
-
-	diag = rte_pktmbuf_alloc_bulk(rxq->mpool, &rxq->sw_ring[0], rxq->nb_rx_desc);
-	if (diag < 0) {
-		rxq->stats.no_mbufs_bulk++;
-		for (i = 0; i < rxq->nb_rx_desc - 1; i++) {
-			nmb = rte_pktmbuf_alloc(rxq->mpool);
-			if (!nmb)
-				break;
-			rxq->sw_ring[i] = nmb;
-		}
-		if (i < rxq->nb_rx_desc - 1) {
-			rxq->stats.no_mbufs += rxq->nb_rx_desc - 1 - i;
-			return -ENOMEM;
-		}
-	}
-
-	for (i = 0; i < rxq->nb_rx_desc; i++) {
-		if (i == rxq->nb_rx_desc - 1)
-			break;
-		nmb = rxq->sw_ring[i];
-		rxq->rx_ring[i].buf_addr = rte_cpu_to_le_64(rte_mbuf_data_iova_default(nmb));
-		rxq->rx_ring[i].buf_id = rte_cpu_to_le_16(i);
-	}
-
-	rxq->nb_rx_hold = 0;
-	rxq->bufq_tail = rxq->nb_rx_desc - 1;
-
-	rte_write32(rxq->bufq_tail, rxq->qrx_tail);
-
-	return 0;
-}
-
-static int
 gve_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complete)
 {
 	struct gve_priv *priv = dev->data->dev_private;
@@ -201,57 +126,43 @@ gve_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complete)
 }
 
 static int
-gve_dev_start(struct rte_eth_dev *dev)
+gve_start_queues(struct rte_eth_dev *dev)
 {
-	uint16_t num_queues = dev->data->nb_tx_queues;
 	struct gve_priv *priv = dev->data->dev_private;
-	struct gve_tx_queue *txq;
-	struct gve_rx_queue *rxq;
+	uint16_t num_queues;
 	uint16_t i;
-	int err;
+	int ret;
 
+	num_queues = dev->data->nb_tx_queues;
 	priv->txqs = (struct gve_tx_queue **)dev->data->tx_queues;
-	err = gve_adminq_create_tx_queues(priv, num_queues);
-	if (err) {
-		PMD_DRV_LOG(ERR, "failed to create %u tx queues.", num_queues);
-		return err;
+	ret = gve_adminq_create_tx_queues(priv, num_queues);
+	if (ret != 0) {
+		PMD_DRV_LOG(ERR, "Failed to create %u tx queues.", num_queues);
+		return ret;
 	}
-	for (i = 0; i < num_queues; i++) {
-		txq = priv->txqs[i];
-		txq->qtx_tail =
-		&priv->db_bar2[rte_be_to_cpu_32(txq->qres->db_index)];
-		txq->qtx_head =
-		&priv->cnt_array[rte_be_to_cpu_32(txq->qres->counter_index)];
-
-		rte_write32(rte_cpu_to_be_32(GVE_IRQ_MASK), txq->ntfy_addr);
-	}
+	for (i = 0; i < num_queues; i++)
+		if (gve_tx_queue_start(dev, i) != 0) {
+			PMD_DRV_LOG(ERR, "Fail to start Tx queue %d", i);
+			goto err_tx;
+		}
 
 	num_queues = dev->data->nb_rx_queues;
 	priv->rxqs = (struct gve_rx_queue **)dev->data->rx_queues;
-	err = gve_adminq_create_rx_queues(priv, num_queues);
-	if (err) {
-		PMD_DRV_LOG(ERR, "failed to create %u rx queues.", num_queues);
+	ret = gve_adminq_create_rx_queues(priv, num_queues);
+	if (ret != 0) {
+		PMD_DRV_LOG(ERR, "Failed to create %u rx queues.", num_queues);
 		goto err_tx;
 	}
 	for (i = 0; i < num_queues; i++) {
-		rxq = priv->rxqs[i];
-		rxq->qrx_tail =
-		&priv->db_bar2[rte_be_to_cpu_32(rxq->qres->db_index)];
-
-		rte_write32(rte_cpu_to_be_32(GVE_IRQ_MASK), rxq->ntfy_addr);
-
 		if (gve_is_gqi(priv))
-			err = gve_refill_pages(rxq);
+			ret = gve_rx_queue_start(dev, i);
 		else
-			err = gve_refill_dqo(rxq);
-		if (err) {
-			PMD_DRV_LOG(ERR, "Failed to refill for RX");
+			ret = gve_rx_queue_start_dqo(dev, i);
+		if (ret != 0) {
+			PMD_DRV_LOG(ERR, "Fail to start Rx queue %d", i);
 			goto err_rx;
 		}
 	}
-
-	dev->data->dev_started = 1;
-	gve_link_update(dev, 0);
 
 	return 0;
 
@@ -259,7 +170,24 @@ err_rx:
 	gve_stop_rx_queues(dev);
 err_tx:
 	gve_stop_tx_queues(dev);
-	return err;
+	return ret;
+}
+
+static int
+gve_dev_start(struct rte_eth_dev *dev)
+{
+	int ret;
+
+	ret = gve_start_queues(dev);
+	if (ret != 0) {
+		PMD_DRV_LOG(ERR, "Failed to start queues");
+		return ret;
+	}
+
+	dev->data->dev_started = 1;
+	gve_link_update(dev, 0);
+
+	return 0;
 }
 
 static int
@@ -313,20 +241,22 @@ gve_dev_close(struct rte_eth_dev *dev)
 static int
 gve_verify_driver_compatibility(struct gve_priv *priv)
 {
-	const struct rte_memzone *driver_info_bus;
+	const struct rte_memzone *driver_info_mem;
 	struct gve_driver_info *driver_info;
 	int err;
 
-	driver_info_bus = rte_memzone_reserve_aligned("verify_driver_compatibility",
-						      sizeof(struct gve_driver_info),
-						      rte_socket_id(),
-						      RTE_MEMZONE_IOVA_CONTIG, PAGE_SIZE);
-	if (driver_info_bus == NULL) {
+	driver_info_mem = rte_memzone_reserve_aligned("verify_driver_compatibility",
+			sizeof(struct gve_driver_info),
+			rte_socket_id(),
+			RTE_MEMZONE_IOVA_CONTIG, PAGE_SIZE);
+
+	if (driver_info_mem == NULL) {
 		PMD_DRV_LOG(ERR,
-			    "Could not alloc memzone for driver compatibility");
+		    "Could not alloc memzone for driver compatibility");
 		return -ENOMEM;
 	}
-	driver_info = (struct gve_driver_info *)driver_info_bus->addr;
+	driver_info = (struct gve_driver_info *)driver_info_mem->addr;
+
 	*driver_info = (struct gve_driver_info) {
 		.os_type = 5, /* DPDK */
 		.driver_major = GVE_VERSION_MAJOR,
@@ -343,16 +273,17 @@ gve_verify_driver_compatibility(struct gve_priv *priv)
 		},
 	};
 
-	populate_driver_version_strings((struct os_version_string *)&driver_info->os_version_str1);
+	populate_driver_version_strings((char *)driver_info->os_version_str1,
+			(char *)driver_info->os_version_str2);
 
 	err = gve_adminq_verify_driver_compatibility(priv,
-		sizeof(struct gve_driver_info), (dma_addr_t)driver_info_bus);
-
+		sizeof(struct gve_driver_info),
+		(dma_addr_t)driver_info_mem->iova);
 	/* It's ok if the device doesn't support this */
 	if (err == -EOPNOTSUPP)
 		err = 0;
 
-	rte_memzone_free(driver_info_bus);
+	rte_memzone_free(driver_info_mem);
 	return err;
 }
 
@@ -612,6 +543,10 @@ static const struct eth_dev_ops gve_eth_dev_ops = {
 	.tx_queue_setup       = gve_tx_queue_setup,
 	.rx_queue_release     = gve_rx_queue_release,
 	.tx_queue_release     = gve_tx_queue_release,
+	.rx_queue_start       = gve_rx_queue_start,
+	.tx_queue_start       = gve_tx_queue_start,
+	.rx_queue_stop        = gve_rx_queue_stop,
+	.tx_queue_stop        = gve_tx_queue_stop,
 	.link_update          = gve_link_update,
 	.stats_get            = gve_dev_stats_get,
 	.stats_reset          = gve_dev_stats_reset,
@@ -630,6 +565,10 @@ static const struct eth_dev_ops gve_eth_dev_ops_dqo = {
 	.tx_queue_setup       = gve_tx_queue_setup_dqo,
 	.rx_queue_release     = gve_rx_queue_release_dqo,
 	.tx_queue_release     = gve_tx_queue_release_dqo,
+	.rx_queue_start       = gve_rx_queue_start_dqo,
+	.tx_queue_start       = gve_tx_queue_start_dqo,
+	.rx_queue_stop        = gve_rx_queue_stop_dqo,
+	.tx_queue_stop        = gve_tx_queue_stop_dqo,
 	.link_update          = gve_link_update,
 	.stats_get            = gve_dev_stats_get,
 	.stats_reset          = gve_dev_stats_reset,
@@ -782,7 +721,6 @@ gve_init_priv(struct gve_priv *priv, bool skip_describe_device)
 		PMD_DRV_LOG(ERR, "Failed to alloc admin queue: err=%d", err);
 		return err;
 	}
-
 	err = gve_verify_driver_compatibility(priv);
 	if (err) {
 		PMD_DRV_LOG(ERR, "Could not verify driver compatibility: err=%d", err);
@@ -922,12 +860,12 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 
 	if (gve_is_gqi(priv)) {
 		eth_dev->dev_ops = &gve_eth_dev_ops;
-		eth_dev->rx_pkt_burst = gve_rx_burst;
-		eth_dev->tx_pkt_burst = gve_tx_burst;
+		gve_set_rx_function(eth_dev);
+		gve_set_tx_function(eth_dev);
 	} else {
 		eth_dev->dev_ops = &gve_eth_dev_ops_dqo;
-		eth_dev->rx_pkt_burst = gve_rx_burst_dqo;
-		eth_dev->tx_pkt_burst = gve_tx_burst_dqo;
+		gve_set_rx_function_dqo(eth_dev);
+		gve_set_tx_function_dqo(eth_dev);
 	}
 
 	eth_dev->data->mac_addrs = &priv->dev_addr;

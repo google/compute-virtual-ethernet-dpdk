@@ -468,6 +468,22 @@ int gve_adminq_configure_device_resources(struct gve_priv *priv,
 	return gve_adminq_execute_cmd(priv, &cmd);
 }
 
+int gve_adminq_verify_driver_compatibility(struct gve_priv *priv,
+					   u64 driver_info_len,
+					   dma_addr_t driver_info_addr)
+{
+	union gve_adminq_command cmd;
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.opcode = cpu_to_be32(GVE_ADMINQ_VERIFY_DRIVER_COMPATIBILITY);
+	cmd.verify_driver_compatibility = (struct gve_adminq_verify_driver_compatibility) {
+		.driver_info_len = cpu_to_be64(driver_info_len),
+		.driver_info_addr = cpu_to_be64(driver_info_addr),
+	};
+
+	return gve_adminq_execute_cmd(priv, &cmd);
+}
+
 int gve_adminq_deconfigure_device_resources(struct gve_priv *priv)
 {
 	union gve_adminq_command cmd;
@@ -857,22 +873,6 @@ int gve_adminq_report_stats(struct gve_priv *priv, u64 stats_report_len,
 		.stats_report_len = cpu_to_be64(stats_report_len),
 		.stats_report_addr = cpu_to_be64(stats_report_addr),
 		.interval = cpu_to_be64(interval),
-	};
-
-	return gve_adminq_execute_cmd(priv, &cmd);
-}
-
-int gve_adminq_verify_driver_compatibility(struct gve_priv *priv,
-					   u64 driver_info_len,
-					   dma_addr_t driver_info_addr)
-{
-	union gve_adminq_command cmd;
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.opcode = cpu_to_be32(GVE_ADMINQ_VERIFY_DRIVER_COMPATIBILITY);
-	cmd.verify_driver_compatibility = (struct gve_adminq_verify_driver_compatibility) {
-		.driver_info_len = cpu_to_be64(driver_info_len),
-		.driver_info_addr = cpu_to_be64(driver_info_addr),
 	};
 
 	return gve_adminq_execute_cmd(priv, &cmd);

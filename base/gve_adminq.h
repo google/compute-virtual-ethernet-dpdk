@@ -146,7 +146,6 @@ enum gve_sup_feature_mask {
 };
 
 #define GVE_DEV_OPT_LEN_GQI_RAW_ADDRESSING 0x0
-
 enum gve_driver_capbility {
 	gve_driver_capability_gqi_qpl = 0,
 	gve_driver_capability_gqi_rda = 1,
@@ -155,9 +154,6 @@ enum gve_driver_capbility {
 };
 
 #define GVE_CAP1(a) BIT((int)a)
-#define GVE_CAP2(a) BIT(((int)a) - 64)
-#define GVE_CAP3(a) BIT(((int)a) - 128)
-#define GVE_CAP4(a) BIT(((int)a) - 192)
 
 #define GVE_DRIVER_CAPABILITY_FLAGS1 \
 	(GVE_CAP1(gve_driver_capability_gqi_qpl) | \
@@ -187,6 +183,7 @@ struct gve_adminq_verify_driver_compatibility {
 };
 
 GVE_CHECK_STRUCT_LEN(16,  gve_adminq_verify_driver_compatibility);
+
 
 struct gve_adminq_configure_device_resources {
 	__be64 counter_array;
@@ -388,7 +385,7 @@ union gve_adminq_command {
 			struct gve_adminq_report_link_speed report_link_speed;
 			struct gve_adminq_get_ptype_map get_ptype_map;
 			struct gve_adminq_verify_driver_compatibility
-						verify_driver_compatibility;
+				verify_driver_compatibility;
 		};
 	};
 	u8 reserved[64];
@@ -421,8 +418,8 @@ int gve_adminq_report_link_speed(struct gve_priv *priv);
 struct gve_ptype_lut;
 int gve_adminq_get_ptype_map_dqo(struct gve_priv *priv,
 				 struct gve_ptype_lut *ptype_lut);
+
 int gve_adminq_verify_driver_compatibility(struct gve_priv *priv,
 					   u64 driver_info_len,
 					   dma_addr_t driver_info_addr);
-
 #endif /* _GVE_ADMINQ_H */
