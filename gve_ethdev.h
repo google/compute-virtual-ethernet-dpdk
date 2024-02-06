@@ -29,9 +29,23 @@
 #define GVE_RX_MIN_BUF_SIZE_GQI    2048
 #define GVE_RX_MAX_BUF_SIZE_GQI    4096
 
+#define GVE_RSS_HASH_KEY_SIZE 40
+#define GVE_RSS_INDIR_SIZE 128
+
 #define GVE_TX_CKSUM_OFFLOAD_MASK (		\
 		RTE_MBUF_F_TX_L4_MASK  |	\
 		RTE_MBUF_F_TX_TCP_SEG)
+
+#define GVE_RTE_RSS_OFFLOAD_ALL (	\
+	RTE_ETH_RSS_IPV4 |		\
+	RTE_ETH_RSS_NONFRAG_IPV4_TCP |	\
+	RTE_ETH_RSS_IPV6 |		\
+	RTE_ETH_RSS_IPV6_EX |		\
+	RTE_ETH_RSS_NONFRAG_IPV6_TCP |	\
+	RTE_ETH_RSS_IPV6_TCP_EX |	\
+	RTE_ETH_RSS_NONFRAG_IPV4_UDP |	\
+	RTE_ETH_RSS_NONFRAG_IPV6_UDP |	\
+	RTE_ETH_RSS_IPV6_UDP_EX)
 
 /* A list of pages registered with the device during setup and used by a queue
  * as buffers
@@ -256,6 +270,7 @@ struct gve_priv {
 	uint32_t adminq_destroy_tx_queue_cnt;
 	uint32_t adminq_destroy_rx_queue_cnt;
 	uint32_t adminq_dcfg_device_resources_cnt;
+	uint32_t adminq_cfg_rss_cnt;
 	uint32_t adminq_set_driver_parameter_cnt;
 	uint32_t adminq_report_stats_cnt;
 	uint32_t adminq_report_link_speed_cnt;
@@ -278,6 +293,8 @@ struct gve_priv {
 	const struct rte_memzone *stats_report_mem;
 	uint16_t stats_start_idx; /* start index of array of stats written by NIC */
 	uint16_t stats_end_idx; /* end index of array of stats written by NIC */
+
+	struct gve_rss_config rss_config;
 };
 
 static inline bool
