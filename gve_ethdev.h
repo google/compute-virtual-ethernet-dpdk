@@ -47,6 +47,10 @@
 	RTE_ETH_RSS_NONFRAG_IPV6_UDP |	\
 	RTE_ETH_RSS_IPV6_UDP_EX)
 
+#define GVE_TX_CKSUM_OFFLOAD_MASK (		\
+		RTE_MBUF_F_TX_L4_MASK  |	\
+		RTE_MBUF_F_TX_TCP_SEG)
+
 /* A list of pages registered with the device during setup and used by a queue
  * as buffers
  */
