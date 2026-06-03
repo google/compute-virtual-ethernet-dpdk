@@ -17,6 +17,7 @@ sources = files(
         'gve_version.c',
         'gve_rss.c',
         'gve_flow_rule.c',
+        'gve_mailbox.c',
 )
 includes += include_directories('base')
 
