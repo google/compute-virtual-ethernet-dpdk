@@ -272,6 +272,8 @@ struct gve_flow {
 
 extern const struct rte_flow_ops gve_flow_ops;
 
+struct gve_mailbox;
+
 struct gve_priv {
 	struct gve_irq_db *irq_dbs; /* array of num_ntfy_blks */
 	const struct rte_memzone *irq_dbs_mz;
@@ -336,6 +338,9 @@ struct gve_priv {
 	uint32_t adminq_verify_driver_compatibility_cnt;
 	uint32_t adminq_cfg_flow_rule_cnt;
 	uint32_t adminq_report_nic_timestamp_cnt;
+
+	struct gve_mailbox *mbx;
+
 	volatile uint32_t state_flags;
 
 	/* Gvnic device link speed from hypervisor. */

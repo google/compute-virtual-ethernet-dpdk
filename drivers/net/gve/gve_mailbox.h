@@ -1,11 +1,118 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright (c) 2026 Google LLC
  */
+#include <rte_spinlock.h>
+
+#include "base/gve_osdep.h"
 
 /* Mailbox Queue defines */
 #define GVE_MBX_RESET_CTRL		0x0840700C
 #define GVE_MBX_RESET_STATUS		0x08407008
 
+#define GVE_MBX_RX_BASE			0x08400000
+#define GVE_MBX_TX_BASE			(GVE_MBX_RX_BASE + 0x14)
+
+#define GVE_MBX_RX_LEN_M		RTE_GENMASK32(12, 0)
+#define GVE_MBX_RX_ENABLE_M		BIT(31)
+#define GVE_MBX_RX_HEAD_M		RTE_GENMASK32(12, 0)
+
+#define GVE_MBX_TX_LEN_M		RTE_GENMASK32(9, 0)
+#define GVE_MBX_TX_ENABLE_M		BIT(31)
+#define GVE_MBX_TX_HEAD_M		RTE_GENMASK32(9, 0)
+
+#define GVE_MBX_DEFAULT_RING_SIZE	64
+/* Length of msg queue < mbx queue to allow for async messages from device */
+#define GVE_MBX_MSG_QUEUE_LEN		48
+
+#define GVE_MBX_BUF_SIZE		4906
+
+#define GVE_MBX_DEFAULT_MSG_TIMEOUT_MS	10000
+
 struct gve_priv;
 
+enum gve_mbx_queue_type {
+	GVE_MBX_QUEUE_TYPE_UNKNOWN,
+	GVE_MBX_QUEUE_TYPE_RX,
+	GVE_MBX_QUEUE_TYPE_TX,
+};
+
+struct gve_mbx_registers {
+	/* Lower 6bits are 0 to meet the 64-byte alignment */
+	rte_le32_t base_addr_low;
+	rte_le32_t base_addr_high;
+	/* Max size required by the hw is 1023 */
+	rte_le32_t queue_len;
+	rte_le32_t queue_head;
+	rte_le32_t queue_tail;
+};
+
+struct gve_mbx_queue {
+	enum gve_mbx_queue_type q_type;
+	struct gve_dma_mem desc_ring;
+	uint16_t buf_size;
+	uint16_t ring_size;
+	struct gve_dma_mem *bufs;
+	volatile struct gve_mbx_registers *reg;
+	uint16_t len_mask;
+	uint32_t len_ena_mask;
+	uint16_t next_to_clean;
+	uint16_t next_to_post;
+	rte_spinlock_t q_lock; /* mbx q lock */
+};
+
+struct gve_mbx_completion {
+	pthread_cond_t cond;
+	pthread_mutex_t mutex;
+};
+
+struct gve_mbx_msg {
+	struct gve_mbx_completion comp;
+	uint16_t sw_cookie;
+	int status; /* gve_mbx_status */
+	uint32_t opcode;
+};
+
+struct gve_mbx_msg_queue_map {
+	struct rte_bitmap *bmp;
+	void *mem;
+};
+
+struct gve_mbx_msg_queue {
+	struct gve_mbx_msg_queue_map msg_queue_map;
+	struct gve_mbx_msg **mbx_msgs;
+	uint16_t size;
+	uint32_t counter;
+	uint32_t msg_timeout_ms;
+	rte_spinlock_t mbx_msg_q_lock;
+};
+
+struct gve_mailbox {
+	struct gve_mbx_queue *tx;
+	struct gve_mbx_queue *rx;
+	struct gve_mbx_msg_queue *msg_queue;
+	struct gve_priv *priv;
+	rte_thread_t mbx_thread;
+};
+
+struct gve_mbx_desc {
+	rte_le16_t flags;		/* DD bit, extra payload etc */
+	rte_le16_t destination;		/* send to CP 0x0801 */
+	rte_le16_t buf_len;		/* 0 when no extra payload, max is 4k */
+	union {
+		rte_le16_t retval;	/* MBX RX: status of message */
+		rte_le16_t pfid_vfid;	/* MBX TX: func_id, 0 for PF */
+	};
+	rte_le32_t cmd_opcode;
+	rte_le16_t cmd_retval;		/* size of the message */
+	rte_le16_t reserved1;
+	rte_le32_t function_id;
+	rte_le16_t reserved2;
+	rte_le16_t cmd_cookie;		/* for SW use */
+	rte_le32_t addr_high;		/* of the allocated buffer */
+	rte_le32_t addr_low;		/* of the allocated buffer */
+};
+
 int gve_mbx_reset(struct gve_priv *priv);
+int gve_mbx_init(struct gve_priv *priv);
+void gve_mbx_teardown(struct gve_priv *priv);
+
