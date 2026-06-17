@@ -111,6 +111,10 @@ static inline int gve_mbx_get_err_from_status(int mbx_status) {
 	}
 }
 
+enum gve_mbx_opcode {
+	GVE_MBX_EVENT			= 0x6002,
+};
+
 struct gve_mbx_completion {
 	pthread_cond_t cond;
 	pthread_mutex_t mutex;

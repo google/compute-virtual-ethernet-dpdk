@@ -337,6 +337,14 @@ ret:
 	return -err;
 }
 
+static void gve_mbx_msg_complete(struct gve_mbx_msg *msg, int status)
+{
+	pthread_mutex_lock(&msg->comp.mutex);
+	msg->status = status;
+	pthread_cond_signal(&msg->comp.cond);
+	pthread_mutex_unlock(&msg->comp.mutex);
+}
+
 static void gve_mbx_post_rx_bufs(struct gve_mailbox *mbx)
 {
 	uint16_t ntp = mbx->rx->next_to_post;
@@ -363,6 +371,124 @@ static void gve_mbx_post_rx_bufs(struct gve_mailbox *mbx)
 		mbx->rx->next_to_post = ntp;
 		rte_write32(last_post, &mbx->rx->reg->queue_tail);
 	}
+}
+
+static void gve_mbx_process_msg_completion(struct gve_mailbox *mbx,
+					   struct gve_mbx_desc *recv_desc)
+{
+	struct gve_mbx_msg_queue *msg_queue = mbx->msg_queue;
+	struct gve_mbx_msg *mbx_msg;
+	uint16_t cookie, index;
+	uint32_t opcode;
+	int status;
+
+	status = rte_le_to_cpu_16(recv_desc->cmd_retval);
+	cookie = rte_le_to_cpu_16(recv_desc->cmd_cookie);
+	opcode = rte_le_to_cpu_32(recv_desc->cmd_opcode);
+
+	index = cookie & GVE_MBX_COOKIE_INDEX_MASK;
+	if (index >= msg_queue->size) {
+		return;
+	}
+
+	rte_spinlock_lock(&msg_queue->mbx_msg_q_lock);
+	mbx_msg = msg_queue->mbx_msgs[index];
+	if (rte_bitmap_get(msg_queue->msg_queue_map.bmp, index) || !mbx_msg) {
+		PMD_DRV_LOG(ERR, "No pending mailbox message for response: cookie=0x%x, opcode=0x%x",
+			    cookie, opcode);
+		return;
+	}
+
+	if (mbx_msg->sw_cookie != cookie) {
+		PMD_DRV_LOG(ERR, "Mailbox cookie mismatch: expected 0x%x, received 0x%x.",
+			    mbx_msg->sw_cookie, cookie);
+		return;
+	}
+
+	if (mbx_msg->opcode != opcode) {
+		PMD_DRV_LOG(ERR, "Mailbox opcode mismatch: expected 0x%x, recieved 0x%x.",
+			    mbx_msg->opcode, opcode);
+		return;
+	}
+
+	gve_mbx_msg_complete(mbx_msg, status);
+	rte_spinlock_unlock(&msg_queue->mbx_msg_q_lock);
+}
+
+static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
+			       struct gve_dma_mem *recv_msg)
+{
+	int err = 0;
+
+	switch (opcode) {
+	default:
+		err = -EBADMSG;
+	}
+
+	return err;
+}
+
+static int gve_mbx_receive_msg(struct gve_mailbox *mbx)
+{
+	struct gve_priv *priv = mbx->priv;
+	struct gve_mbx_desc *recv_desc;
+	struct gve_dma_mem *recv_msg;
+	uint16_t ntc, flags;
+	uint32_t opcode;
+	int err = 0;
+
+	if (!gve_get_control_plane_ok(priv))
+		return -EIO;
+
+	rte_spinlock_lock(&mbx->rx->q_lock);
+
+	ntc = mbx->rx->next_to_clean;
+	recv_desc = GVE_MBX_DESC(mbx->rx, ntc);
+	flags = rte_le_to_cpu_16(recv_desc->flags);
+
+	/* Check if desc is marked as done. */
+	if (!(flags & GVE_MBX_FLAG_DD)) {
+		err = -EAGAIN;
+		goto unlock_and_return;
+	}
+
+	recv_msg = &mbx->rx->bufs[ntc];
+
+	opcode = rte_le_to_cpu_32(recv_desc->cmd_opcode);
+	if (opcode == GVE_MBX_EVENT) {
+		if (recv_desc->cmd_retval != GVE_MBX_STATUS_PASSED) {
+			PMD_DRV_LOG(ERR, "Unexpected error status in MBX_EVENT notification: 0x%x",
+				    recv_desc->cmd_retval);
+			err = -EBADMSG;
+			goto update_tail;
+		}
+		goto update_tail;
+	}
+
+	if (recv_desc->cmd_retval != GVE_MBX_STATUS_PASSED) {
+		gve_mbx_process_msg_completion(mbx, recv_desc);
+		err = -EBADMSG;
+		goto update_tail;
+	}
+
+	if (!recv_desc->buf_len) {
+		err = -EBADMSG;
+		PMD_DRV_LOG(ERR, "Unexpected zero-length message received.");
+		goto update_tail;
+	}
+
+	err = gve_mbx_process_msg(mbx, opcode, recv_msg);
+	gve_mbx_process_msg_completion(mbx, recv_desc);
+
+update_tail:
+	memset(recv_desc, 0, sizeof(*recv_desc));
+
+	ntc = (ntc + 1) & mbx->rx->len_mask;
+	mbx->rx->next_to_clean = ntc;
+
+unlock_and_return:
+	rte_spinlock_unlock(&mbx->rx->q_lock);
+	return err;
 }
 
 static void gve_mbx_clean_send_queue(struct gve_mailbox *mbx)
