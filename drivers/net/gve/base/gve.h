@@ -47,11 +47,12 @@ enum gve_queue_format {
 };
 
 enum gve_state_flags_bit {
-	GVE_PRIV_FLAGS_ADMIN_QUEUE_OK		= 1,
+	GVE_PRIV_FLAGS_CONTROL_PLANE_OK		= 1,
 	GVE_PRIV_FLAGS_DEVICE_RESOURCES_OK	= 2,
 	GVE_PRIV_FLAGS_DEVICE_RINGS_OK		= 3,
 	GVE_PRIV_FLAGS_FLOW_SUBSYSTEM_OK	= 4,
 	GVE_PRIV_FLAGS_NAPI_ENABLED		= 5,
+	GVE_PRIV_FLAGS_MAILBOX_OK		= 6,
 };
 
 enum gve_rss_hash_algorithm {

@@ -408,23 +408,23 @@ gve_is_gqi(struct gve_priv *priv)
 }
 
 static inline bool
-gve_get_admin_queue_ok(struct gve_priv *priv)
+gve_get_control_plane_ok(struct gve_priv *priv)
 {
-	return !!rte_bit_relaxed_get32(GVE_PRIV_FLAGS_ADMIN_QUEUE_OK,
+	return !!rte_bit_relaxed_get32(GVE_PRIV_FLAGS_CONTROL_PLANE_OK,
 				       &priv->state_flags);
 }
 
 static inline void
-gve_set_admin_queue_ok(struct gve_priv *priv)
+gve_set_control_plane_ok(struct gve_priv *priv)
 {
-	rte_bit_relaxed_set32(GVE_PRIV_FLAGS_ADMIN_QUEUE_OK,
+	rte_bit_relaxed_set32(GVE_PRIV_FLAGS_CONTROL_PLANE_OK,
 			      &priv->state_flags);
 }
 
 static inline void
-gve_clear_admin_queue_ok(struct gve_priv *priv)
+gve_clear_control_plane_ok(struct gve_priv *priv)
 {
-	rte_bit_relaxed_clear32(GVE_PRIV_FLAGS_ADMIN_QUEUE_OK,
+	rte_bit_relaxed_clear32(GVE_PRIV_FLAGS_CONTROL_PLANE_OK,
 				&priv->state_flags);
 }
 

@@ -287,7 +287,7 @@ int gve_adminq_alloc(struct gve_priv *priv)
 			    &priv->reg_bar0->driver_status);
 	}
 
-	gve_set_admin_queue_ok(priv);
+	gve_set_control_plane_ok(priv);
 	return 0;
 }
 
@@ -324,17 +324,17 @@ void gve_adminq_release(struct gve_priv *priv)
 			msleep(GVE_ADMINQ_SLEEP_LEN);
 		}
 	}
-	gve_clear_admin_queue_ok(priv);
+	gve_clear_control_plane_ok(priv);
 }
 
 void gve_adminq_free(struct gve_priv *priv)
 {
-	if (!gve_get_admin_queue_ok(priv))
+	if (!gve_get_control_plane_ok(priv))
 		return;
 	gve_adminq_release(priv);
 	gve_free_dma_mem(&priv->adminq_dma_mem);
 	pthread_mutex_destroy(&priv->adminq_lock);
-	gve_clear_admin_queue_ok(priv);
+	gve_clear_control_plane_ok(priv);
 }
 
 static void gve_adminq_kick_cmd(struct gve_priv *priv, u32 prod_cnt)
