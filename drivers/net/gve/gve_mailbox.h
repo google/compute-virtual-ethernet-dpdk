@@ -28,6 +28,20 @@
 
 #define GVE_MBX_DEFAULT_MSG_TIMEOUT_MS	10000
 
+/* GVE Mailbox descriptor flags */
+#define GVE_MBX_FLAG_DD_S		0
+#define GVE_MBX_FLAG_ERR_S		2
+#define GVE_MBX_FLAG_RD_S               10
+#define GVE_MBX_FLAG_BUF_S              12
+
+#define GVE_MBX_FLAG_DD			BIT(GVE_MBX_FLAG_DD_S)	/* 0x1 */
+#define GVE_MBX_FLAG_ERR		BIT(GVE_MBX_FLAG_ERR_S) /* 0x4 */
+#define GVE_MBX_FLAG_RD                 BIT(GVE_MBX_FLAG_RD_S)  /* 0x400  */
+#define GVE_MBX_FLAG_BUF                BIT(GVE_MBX_FLAG_BUF_S) /* 0x1000 */
+
+#define GVE_MBX_DESC(R, i) \
+	(&(((struct gve_mbx_desc *)((R)->desc_ring.va))[i]))
+
 struct gve_priv;
 
 enum gve_mbx_queue_type {

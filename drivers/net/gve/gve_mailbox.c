@@ -299,6 +299,34 @@ err:
 	return err;
 }
 
+static void gve_mbx_post_rx_bufs(struct gve_mailbox *mbx)
+{
+	uint16_t ntp = mbx->rx->next_to_post;
+	struct gve_mbx_desc *desc;
+	uint16_t last_post;
+
+	while (((ntp + 1) & mbx->rx->len_mask) != mbx->rx->next_to_clean) {
+		desc = GVE_MBX_DESC(mbx->rx, ntp);
+
+		desc->flags = rte_le_to_cpu_16(GVE_MBX_FLAG_BUF |
+					       GVE_MBX_FLAG_RD);
+		desc->buf_len = GVE_MBX_BUF_SIZE;
+		desc->addr_high =
+			rte_cpu_to_le_32(mbx->rx->bufs[ntp].pa >> 32);
+		desc->addr_low =
+			rte_cpu_to_le_32((mbx->rx->bufs[ntp].pa) & 0xFFFFFFFF);
+
+		last_post = ntp;
+		ntp = (ntp + 1) & mbx->rx->len_mask;
+	}
+
+	/* Update tail doorbell if buffers were posted. */
+	if (ntp != mbx->rx->next_to_post) {
+		mbx->rx->next_to_post = ntp;
+		rte_write32(last_post, &mbx->rx->reg->queue_tail);
+	}
+}
+
 void gve_mbx_teardown(struct gve_priv *priv)
 {
 	int err;
@@ -359,6 +387,8 @@ int gve_mbx_init(struct gve_priv *priv)
 	/* Init the mailbox queues */
 	gve_mbx_reg_init(mbx->tx, priv->reg_bar0);
 	gve_mbx_reg_init(mbx->rx, priv->reg_bar0);
+
+	gve_mbx_post_rx_bufs(mbx);
 
 	gve_set_control_plane_ok(priv);
 
