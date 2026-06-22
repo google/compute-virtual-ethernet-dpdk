@@ -42,6 +42,10 @@
 #define GVE_MBX_DESC(R, i) \
 	(&(((struct gve_mbx_desc *)((R)->desc_ring.va))[i]))
 
+#define GVE_MBX_COOKIE_INDEX_BITS	6
+#define GVE_MBX_COOKIE_INDEX_MASK \
+	RTE_GENMASK32(GVE_MBX_COOKIE_INDEX_BITS - 1, 0)
+
 struct gve_priv;
 
 enum gve_mbx_queue_type {
@@ -73,6 +77,39 @@ struct gve_mbx_queue {
 	uint16_t next_to_post;
 	rte_spinlock_t q_lock; /* mbx q lock */
 };
+
+enum gve_mbx_status {
+	GVE_MBX_STATUS_UNSET				= 0,
+	GVE_MBX_STATUS_PASSED				= 1,
+	GVE_MBX_STATUS_UNSUPPORTED_ERROR		= 0xFFEF,
+	GVE_MBX_STATUS_ABORTED_ERROR			= 0xFFF0,
+	GVE_MBX_STATUS_ALREADY_EXISTS_ERROR		= 0xFFF1,
+	GVE_MBX_STATUS_CANCELLED_ERROR			= 0xFFF2,
+	GVE_MBX_STATUS_DATA_LOSS_ERROR			= 0xFFF3,
+	GVE_MBX_STATUS_DEADLINE_EXCEEDED_ERROR		= 0xFFF4,
+	GVE_MBX_STATUS_FAILED_PRECONDITION_ERROR	= 0xFFF5,
+	GVE_MBX_STATUS_INTERNAL_ERROR			= 0xFFF6,
+	GVE_MBX_STATUS_INVALID_ARGUMENT_ERROR		= 0xFFF7,
+	GVE_MBX_STATUS_NOT_FOUND_ERROR			= 0xFFF8,
+	GVE_MBX_STATUS_OUT_OF_RANGE_ERROR		= 0xFFF9,
+	GVE_MBX_STATUS_PERMISSION_DENIED_ERROR		= 0xFFFA,
+	GVE_MBX_STATUS_UNAUTHENTICATED_ERROR		= 0xFFFB,
+	GVE_MBX_STATUS_RESOURCE_EXHAUSTED_ERROR		= 0xFFFC,
+	GVE_MBX_STATUS_UNAVAILABLE_ERROR		= 0xFFFD,
+	GVE_MBX_STATUS_UNIMPLEMENTED_ERROR		= 0xFFFE,
+	GVE_MBX_STATUS_UNKNOWN_ERROR			= 0xFFFF,
+};
+
+static inline int gve_mbx_get_err_from_status(int mbx_status) {
+	switch (mbx_status) {
+	case GVE_MBX_STATUS_PASSED:
+		return 0;
+	case GVE_MBX_STATUS_INVALID_ARGUMENT_ERROR:
+		return EINVAL;
+	default:
+		return EBADMSG;
+	}
+}
 
 struct gve_mbx_completion {
 	pthread_cond_t cond;

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Google LLC
  */
 #include <rte_malloc.h>
+#include <rte_time.h>
 
 #include "gve_mailbox.h"
 #include "base/gve_osdep.h"
@@ -299,6 +300,43 @@ err:
 	return err;
 }
 
+static void gve_mbx_msg_comp_init(struct gve_mbx_msg *msg)
+{
+	pthread_mutex_init(&msg->comp.mutex, NULL);
+	pthread_cond_init(&msg->comp.cond, NULL);
+
+	pthread_mutex_lock(&msg->comp.mutex);
+	msg->status = GVE_MBX_STATUS_UNSET;
+	pthread_mutex_unlock(&msg->comp.mutex);
+}
+
+static int gve_mbx_wait_for_completion(struct gve_mbx_msg *msg,
+				       uint64_t timeout_ms)
+{
+	struct timespec ts;
+	int err = 0;
+	int ret = 0;
+
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts = rte_ns_to_timespec(rte_timespec_to_ns(&ts) + timeout_ms * 1000000);
+
+	pthread_mutex_lock(&msg->comp.mutex);
+	while (ret || msg->status == GVE_MBX_STATUS_UNSET) {
+		ret = pthread_cond_timedwait(&msg->comp.cond, &msg->comp.mutex,
+					     &ts);
+		/* Only exit on timeout error. */
+		if (ret == ETIMEDOUT) {
+			err = ETIMEDOUT;
+			goto ret;
+		}
+	}
+
+	err = gve_mbx_get_err_from_status(msg->status);
+ret:
+	pthread_mutex_unlock(&msg->comp.mutex);
+	return -err;
+}
+
 static void gve_mbx_post_rx_bufs(struct gve_mailbox *mbx)
 {
 	uint16_t ntp = mbx->rx->next_to_post;
@@ -325,6 +363,161 @@ static void gve_mbx_post_rx_bufs(struct gve_mailbox *mbx)
 		mbx->rx->next_to_post = ntp;
 		rte_write32(last_post, &mbx->rx->reg->queue_tail);
 	}
+}
+
+static void gve_mbx_clean_send_queue(struct gve_mailbox *mbx)
+{
+	struct gve_mbx_desc *desc;
+	uint16_t ntc;
+	uint32_t i;
+
+	ntc = mbx->tx->next_to_clean;
+
+	/* Attempt to clean the entire queue */
+	for (i = 0; i < mbx->tx->len_mask; i++) {
+		/* should clean from ntc */
+		desc = GVE_MBX_DESC(mbx->tx, ntc);
+
+		/* check if desc is marked as done */
+		if (!(rte_le_to_cpu_16(desc->flags) & GVE_MBX_FLAG_DD))
+			break;
+
+		gve_free_dma_mem(&mbx->tx->bufs[ntc]);
+		memset(desc, 0, sizeof(*desc));
+
+		ntc = (ntc + 1) & mbx->tx->len_mask;
+	}
+
+	mbx->tx->next_to_clean = ntc;
+}
+
+static int gve_mbx_send_msg(struct gve_mailbox *mbx, uint32_t opcode,
+			    uint16_t msg_bytes, uint8_t *msg, uint16_t cookie)
+{
+	struct gve_mbx_desc *send_desc;
+	struct gve_dma_mem *send_msg;
+	uint16_t flags;
+
+	gve_mbx_clean_send_queue(mbx);
+
+	/* Allocate DMA region for message. */
+	send_msg = &mbx->tx->bufs[mbx->tx->next_to_post];
+	if (!gve_alloc_dma_mem(send_msg, GVE_MBX_BUF_SIZE)) {
+		return -ENOMEM;
+	}
+	send_msg->size = GVE_MBX_BUF_SIZE;
+
+	/* Fill out descriptor. */
+	send_desc = GVE_MBX_DESC(mbx->tx, mbx->tx->next_to_post);
+	send_desc->destination = rte_cpu_to_le_16(0x0801); /* send message to CP */
+	send_desc->pfid_vfid = 0;
+	send_desc->buf_len = rte_cpu_to_le_16(msg_bytes);
+	send_desc->cmd_opcode = rte_cpu_to_le_32(opcode);
+	send_desc->cmd_cookie = rte_cpu_to_le_16(cookie);
+	send_desc->addr_high =
+			rte_cpu_to_le_32(send_msg->pa >> 32);
+	send_desc->addr_low =
+			rte_cpu_to_le_32((send_msg->pa) & 0xFFFFFFFF);
+
+	/* Set required flags. */
+	flags = GVE_MBX_FLAG_BUF | GVE_MBX_FLAG_RD;
+	send_desc->flags = rte_cpu_to_le_16(flags);
+
+	/* Copy message into DMA region. */
+	if (msg && msg_bytes)
+		rte_memcpy(send_msg->va, msg, msg_bytes);
+
+	mbx->tx->next_to_post = (mbx->tx->next_to_post + 1) & mbx->tx->len_mask;
+	rte_write32(mbx->tx->next_to_post, &mbx->tx->reg->queue_tail);
+	return 0;
+}
+
+static bool gve_mbx_in_reset(struct gve_mailbox *mbx)
+{
+	if (!mbx->rx)
+		return true;
+
+	return !(rte_read32(&mbx->rx->reg->queue_len) & GVE_MBX_RX_LEN_M);
+}
+
+static int gve_mbx_get_free_send_idx(struct gve_mbx_msg_queue *mbx_msg_queue,
+				     u16 *index)
+{
+	uint64_t slab = 0;
+	uint32_t idx = 0;
+	int ret;
+
+	ret = rte_bitmap_scan(mbx_msg_queue->msg_queue_map.bmp, &idx, &slab);
+	if (!ret)
+		return -EBUSY;
+	idx += rte_bsf64(slab);
+
+	*index = idx;
+	return 0;
+}
+
+static int gve_mbx_send_msg_wait(struct gve_mailbox *mbx, uint32_t opcode,
+				 uint16_t msg_bytes, uint8_t *msg)
+{
+	struct gve_mbx_msg *mbx_msg;
+	u16 cookie, index = 0;
+	int err;
+
+	if (gve_mbx_in_reset(mbx)) {
+		PMD_DRV_LOG(ERR,
+			    "Mailbox reset detected, cannot send mbx msg");
+		return -EIO;
+	}
+
+	if (!gve_get_control_plane_ok(mbx->priv))
+		return -EIO;
+
+	mbx_msg = rte_zmalloc(NULL, sizeof(*mbx_msg), 0);
+	if (!mbx_msg)
+		return -ENOMEM;
+
+	gve_mbx_msg_comp_init(mbx_msg);
+
+	rte_spinlock_lock(&mbx->msg_queue->mbx_msg_q_lock);
+
+	if (gve_mbx_get_free_send_idx(mbx->msg_queue, &index)) {
+		err = -EBUSY;
+		goto err_unlock;
+	}
+
+	/* create sw cookie */
+	mbx->msg_queue->counter++;
+	cookie = BIT(15) |
+		 ((mbx->msg_queue->counter & 0x1FF) << GVE_MBX_COOKIE_INDEX_BITS) |
+		 (index & GVE_MBX_COOKIE_INDEX_MASK);
+
+	mbx_msg->sw_cookie = cookie;
+	mbx_msg->opcode = opcode;
+
+	rte_bitmap_clear(mbx->msg_queue->msg_queue_map.bmp, index);
+	mbx->msg_queue->mbx_msgs[index] = mbx_msg;
+
+
+	err = gve_mbx_send_msg(mbx, opcode, msg_bytes, msg, cookie);
+	if (err)
+		goto err_unmap_cookie;
+
+	rte_spinlock_unlock(&mbx->msg_queue->mbx_msg_q_lock);
+
+	err = gve_mbx_wait_for_completion(mbx_msg,
+					  mbx->msg_queue->msg_timeout_ms);
+
+	rte_spinlock_lock(&mbx->msg_queue->mbx_msg_q_lock);
+err_unmap_cookie:
+	rte_bitmap_set(mbx->msg_queue->msg_queue_map.bmp, index);
+	mbx->msg_queue->mbx_msgs[index] = NULL;
+
+err_unlock:
+	rte_spinlock_unlock(&mbx->msg_queue->mbx_msg_q_lock);
+	pthread_mutex_destroy(&mbx_msg->comp.mutex);
+	pthread_cond_destroy(&mbx_msg->comp.cond);
+	rte_free(mbx_msg);
+	return err;
 }
 
 void gve_mbx_teardown(struct gve_priv *priv)
