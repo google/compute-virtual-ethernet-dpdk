@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright (c) 2026 Google LLC
  */
+#include <rte_alarm.h>
 #include <rte_malloc.h>
 #include <rte_time.h>
 
@@ -491,6 +492,31 @@ unlock_and_return:
 	return err;
 }
 
+static void gve_mbx_rx_poll(struct gve_mailbox *mbx)
+{
+	struct gve_mbx_queue *rx = mbx->rx;
+	uint16_t posted_bufs;
+	int err;
+
+	do {
+		err = gve_mbx_receive_msg(mbx);
+		if (err == -EIO) {
+			PMD_DRV_LOG(ERR, "Mailbox queue not set up.");
+			break;
+		} else if (err && err != -EAGAIN) {
+			PMD_DRV_LOG(ERR, "Failed to receive mbx message: %d",
+				    err);
+		}
+
+		posted_bufs = (rx->next_to_post - rx->next_to_clean) & rx->len_mask;
+		if (posted_bufs < GVE_MBX_MSG_QUEUE_LEN)
+			gve_mbx_post_rx_bufs(mbx);
+	} while (err != -EAGAIN);
+
+	/* Post buffers and update tail. */
+	gve_mbx_post_rx_bufs(mbx);
+}
+
 static void gve_mbx_clean_send_queue(struct gve_mailbox *mbx)
 {
 	struct gve_mbx_desc *desc;
@@ -646,11 +672,21 @@ err_unlock:
 	return err;
 }
 
+static void gve_mbx_task(void *arg)
+{
+	struct gve_mailbox *mbx = arg;
+
+	gve_mbx_rx_poll(mbx);
+	rte_eal_alarm_set(300000, gve_mbx_task, mbx);
+}
+
 void gve_mbx_teardown(struct gve_priv *priv)
 {
 	int err;
 
 	gve_clear_control_plane_ok(priv);
+
+	rte_eal_alarm_cancel(gve_mbx_task, priv->mbx);
 
 	err = gve_mbx_reset(priv);
 	if (err)
@@ -708,6 +744,8 @@ int gve_mbx_init(struct gve_priv *priv)
 	gve_mbx_reg_init(mbx->rx, priv->reg_bar0);
 
 	gve_mbx_post_rx_bufs(mbx);
+
+	rte_eal_alarm_set(300000, gve_mbx_task, mbx);
 
 	gve_set_control_plane_ok(priv);
 
