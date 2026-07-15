@@ -10,6 +10,7 @@
 #include "gve_register.h"
 #include "gve_ethdev.h"
 #include "gve_version.h"
+#include "gve_rss.h"
 
 static int gve_mbx_check_reset_complete(struct gve_priv *priv)
 {
@@ -638,11 +639,13 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 		return gve_mbx_process_config_tx_queues_resp(mbx, recv_msg);
 	case GVE_MBX_CONFIG_RX_QUEUES:
 		return gve_mbx_process_config_rx_queues_resp(mbx, recv_msg);
+	/* No processing needed. */
 	case GVE_MBX_ENABLE_TX_QUEUES:
 	case GVE_MBX_ENABLE_RX_QUEUES:
 	case GVE_MBX_DISABLE_TX_QUEUES:
 	case GVE_MBX_DISABLE_RX_QUEUES:
-		return 0;
+	case GVE_MBX_CONFIGURE_RSS:
+		break;
 	default:
 		err = -EBADMSG;
 	}
@@ -907,6 +910,48 @@ err_unlock:
 	pthread_mutex_destroy(&mbx_msg->comp.mutex);
 	pthread_cond_destroy(&mbx_msg->comp.cond);
 	rte_free(mbx_msg);
+	return err;
+}
+
+int gve_mbx_configure_rss(struct gve_priv *priv,
+			  struct gve_rss_config *rss_config)
+
+{
+	struct gve_mbx_rss_info *req;
+	size_t rss_info_size;
+	int err;
+	int i;
+
+	if (!rss_config->indir_size || !rss_config->key_size)
+		return -EINVAL;
+
+	if (rss_config->key_size > sizeof(req->hash_key))
+		return -EINVAL;
+
+	rss_info_size = sizeof(*req) + sizeof(*req->hash_lut) *
+		rss_config->indir_size;
+	req = rte_zmalloc(NULL, rss_info_size, 0);
+	if (!req)
+		return -ENOMEM;
+
+	req->hash_types = rte_cpu_to_le_16(rss_config->hash_types);
+	req->hash_alg = rss_config->alg;
+
+	req->hash_key_size = rss_config->key_size;
+	memcpy(req->hash_key, rss_config->key, rss_config->key_size);
+
+	req->hash_lut_size = rss_config->indir_size;
+	for (i = 0; i < rss_config->indir_size; i++)
+		req->hash_lut[i] = rte_cpu_to_le_32(rss_config->indir[i]);
+
+
+	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_CONFIGURE_RSS,
+				    rss_info_size, (uint8_t *)req);
+	if (err)
+		PMD_DRV_LOG(ERR,
+			    "Failure in sending GVE_MBX_CONFIGURE_RSS message.");
+
+	rte_free(req);
 	return err;
 }
 

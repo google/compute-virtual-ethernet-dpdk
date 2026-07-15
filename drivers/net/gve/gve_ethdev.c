@@ -1628,6 +1628,7 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.destroy_tx_queues = gve_mbx_destroy_tx_queues,
 	.create_rx_queues = gve_mbx_create_rx_queues,
 	.destroy_rx_queues = gve_mbx_destroy_rx_queues,
+	.configure_rss = gve_mbx_configure_rss,
 };
 
 static int

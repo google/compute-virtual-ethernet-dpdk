@@ -134,6 +134,7 @@ enum gve_mbx_opcode {
 	GVE_MBX_ENABLE_RX_QUEUES		= 0x600d,
 	GVE_MBX_DISABLE_TX_QUEUES		= 0x600e,
 	GVE_MBX_DISABLE_RX_QUEUES		= 0x600f,
+	GVE_MBX_CONFIGURE_RSS			= 0x6011,
 };
 
 struct gve_mbx_event {
@@ -340,6 +341,24 @@ struct gve_mbx_desc {
 	rte_le32_t addr_high;		/* of the allocated buffer */
 	rte_le32_t addr_low;		/* of the allocated buffer */
 };
+
+enum gve_mbx_hash_alg {
+	GVE_MBX_HASH_ALG_TOEPLITZ = 1,
+};
+
+struct gve_mbx_rss_info {
+	rte_le16_t hash_types;
+	u8 hash_alg;			/* gve_mbx_hash_alg */
+	u8 reserved;
+	rte_le16_t hash_key_size;
+	rte_le16_t hash_lut_size;	/* in number of elements */
+	u8 hash_key[256];
+	rte_le32_t hash_lut[];
+};
+
+struct gve_rss_config;
+int gve_mbx_configure_rss(struct gve_priv *priv,
+			  struct gve_rss_config *rss_config);
 
 int gve_mbx_reset(struct gve_priv *priv);
 int gve_mbx_init(struct gve_priv *priv);
