@@ -612,7 +612,7 @@ gve_stop_tx_queues_dqo(struct rte_eth_dev *dev)
 	uint16_t i;
 	int err;
 
-	err = gve_adminq_destroy_tx_queues(hw, dev->data->nb_tx_queues);
+	err = hw->ctrl_ops->destroy_tx_queues(hw, dev->data->nb_tx_queues);
 	if (err != 0)
 		PMD_DRV_LOG(WARNING, "failed to destroy txqs");
 

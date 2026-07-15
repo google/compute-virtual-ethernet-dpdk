@@ -450,7 +450,7 @@ gve_free_flow_rules(struct gve_priv *priv)
 	int err = 0;
 
 	if (!TAILQ_EMPTY(&priv->active_flows)) {
-		err = gve_adminq_reset_flow_rules(priv);
+		err = priv->ctrl_ops->reset_flow_rules(priv);
 		if (err) {
 			PMD_DRV_LOG(ERR,
 				"Failed to reset flow rules, internal device err=%d",
@@ -516,7 +516,7 @@ gve_create_flow_rule(struct rte_eth_dev *dev,
 		goto free_flow_and_unlock;
 	}
 
-	err = gve_adminq_add_flow_rule(priv, &rule, flow->rule_id);
+	err = priv->ctrl_ops->add_flow_rule(priv, &rule, flow->rule_id);
 	if (err) {
 		rte_bitmap_set(priv->avail_flow_rule_bmp, flow->rule_id);
 		rte_flow_error_set(error, -err,
@@ -588,7 +588,7 @@ gve_destroy_flow_rule(struct rte_eth_dev *dev, struct rte_flow *flow_handle,
 		goto unlock;
 	}
 
-	err = gve_adminq_del_flow_rule(priv, flow->rule_id);
+	err = priv->ctrl_ops->del_flow_rule(priv, flow->rule_id);
 	if (err) {
 		rte_flow_error_set(error, -err,
 			RTE_FLOW_ERROR_TYPE_HANDLE, NULL,

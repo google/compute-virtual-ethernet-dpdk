@@ -273,8 +273,42 @@ struct gve_flow {
 extern const struct rte_flow_ops gve_flow_ops;
 
 struct gve_mailbox;
+struct gve_priv;
+struct gve_flow_rule_params;
+
+struct gve_ctrl_ops {
+	int (*init_ctrl_plane)(struct gve_priv *priv);
+	void (*free_ctrl_plane)(struct gve_priv *priv);
+	int (*get_device_properties)(struct gve_priv *priv);
+	int (*get_ptype_map)(struct gve_priv *priv);
+	int (*get_interrupt_dbs)(struct gve_priv *priv);
+	void (*free_db_resources)(struct gve_priv *priv);
+	int (*setup_mgmt_irq)(struct gve_priv *priv);
+	void (*teardown_mgmt_irq)(struct gve_priv *priv);
+	int (*create_tx_queues)(struct gve_priv *priv, uint32_t num_queues);
+	int (*destroy_tx_queues)(struct gve_priv *priv, uint32_t num_queues);
+	int (*create_rx_queues)(struct gve_priv *priv, uint32_t num_queues);
+	int (*destroy_rx_queues)(struct gve_priv *priv, uint32_t num_queues);
+	int (*configure_device_resources)(struct gve_priv *priv);
+	int (*deconfigure_device_resources)(struct gve_priv *priv);
+	int (*report_link_status)(struct gve_priv *priv);
+	int (*report_link_speed)(struct gve_priv *priv);
+	int (*query_rss)(struct gve_priv *priv, struct gve_rss_config *rss_conf);
+	int (*configure_rss)(struct gve_priv *priv, struct gve_rss_config *rss_conf);
+	int (*add_flow_rule)(struct gve_priv *priv, struct gve_flow_rule_params *rule, uint32_t loc);
+	int (*del_flow_rule)(struct gve_priv *priv, uint32_t loc);
+	int (*reset_flow_rules)(struct gve_priv *priv);
+	int (*setup_stats_report)(struct gve_priv *priv, uint64_t stats_report_len,
+				 dma_addr_t stats_report_addr, uint64_t interval_ms);
+	int (*report_stats)(struct gve_priv *priv);
+	int (*report_nic_timestamp)(struct gve_priv *priv, dma_addr_t dma_addr);
+	int (*set_mtu)(struct gve_priv *priv, uint64_t mtu);
+	int (*register_page_list)(struct gve_priv *priv, struct gve_queue_page_list *qpl);
+	int (*unregister_page_list)(struct gve_priv *priv, uint32_t page_list_id);
+};
 
 struct gve_priv {
+	const struct gve_ctrl_ops *ctrl_ops;
 	struct gve_irq_db *irq_dbs; /* array of num_ntfy_blks */
 	const struct rte_memzone *irq_dbs_mz;
 	uint32_t mgmt_msix_idx;

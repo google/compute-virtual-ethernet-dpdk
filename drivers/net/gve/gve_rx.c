@@ -525,7 +525,7 @@ gve_stop_rx_queues(struct rte_eth_dev *dev)
 	if (!gve_is_gqi(hw))
 		return gve_stop_rx_queues_dqo(dev);
 
-	err = gve_adminq_destroy_rx_queues(hw, dev->data->nb_rx_queues);
+	err = hw->ctrl_ops->destroy_rx_queues(hw, dev->data->nb_rx_queues);
 	if (err != 0)
 		PMD_DRV_LOG(WARNING, "failed to destroy rxqs");
 

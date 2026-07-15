@@ -732,7 +732,7 @@ gve_stop_tx_queues(struct rte_eth_dev *dev)
 	if (!gve_is_gqi(hw))
 		return gve_stop_tx_queues_dqo(dev);
 
-	err = gve_adminq_destroy_tx_queues(hw, dev->data->nb_tx_queues);
+	err = hw->ctrl_ops->destroy_tx_queues(hw, dev->data->nb_tx_queues);
 	if (err != 0)
 		PMD_DRV_LOG(WARNING, "failed to destroy txqs");
 
