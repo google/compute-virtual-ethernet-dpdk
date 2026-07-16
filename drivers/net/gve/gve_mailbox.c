@@ -540,6 +540,27 @@ gve_mbx_process_get_interrupt_dbs_resp(struct gve_mailbox *mbx,
 	return 0;
 }
 
+static int
+gve_mbx_process_get_ptype_map_resp(struct gve_mailbox *mbx,
+				   struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_get_ptype_map_resp *resp =
+		(struct gve_mbx_get_ptype_map_resp *)recv_msg->va;
+	struct gve_priv *priv = mbx->priv;
+	struct gve_ptype_lut *ptype_lut = priv->ptype_lut_dqo;
+	int i;
+
+	if (!ptype_lut)
+		return -EINVAL;
+
+	for (i = 0; i < GVE_NUM_PTYPES; i++) {
+		ptype_lut->ptypes[i].l3_type = resp->ptypes[i].l3_type;
+		ptype_lut->ptypes[i].l4_type = resp->ptypes[i].l4_type;
+	}
+
+	return 0;
+}
+
 static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -550,6 +571,8 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 		return gve_mbx_process_negotiate_caps_resp(mbx, recv_msg);
 	case GVE_MBX_GET_INTERRUPT_DBS:
 		return gve_mbx_process_get_interrupt_dbs_resp(mbx, recv_msg);
+	case GVE_MBX_GET_PTYPE_MAP:
+		return gve_mbx_process_get_ptype_map_resp(mbx, recv_msg);
 	default:
 		err = -EBADMSG;
 	}
@@ -928,6 +951,18 @@ gve_mbx_get_interrupt_dbs(struct gve_priv *priv)
 				    sizeof(req), (uint8_t *)&req);
 	if (err)
 		PMD_DRV_LOG(ERR, "Failed to get interrupt doorbells over mailbox: %d", err);
+
+	return err;
+}
+
+int
+gve_mbx_get_ptype_map(struct gve_priv *priv)
+{
+	int err;
+
+	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_GET_PTYPE_MAP, 0, NULL);
+	if (err)
+		PMD_DRV_LOG(ERR, "Failed to get ptype map over mailbox: %d", err);
 
 	return err;
 }

@@ -1621,6 +1621,7 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.free_ctrl_plane = gve_mbx_teardown,
 	.get_device_properties = gve_mbx_get_device_properties,
 	.get_interrupt_dbs = gve_mbx_get_interrupt_dbs,
+	.get_ptype_map = gve_mbx_get_ptype_map,
 };
 
 static int

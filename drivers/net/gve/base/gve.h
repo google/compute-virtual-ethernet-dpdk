@@ -31,9 +31,39 @@ struct gve_irq_db {
 	rte_be32_t id;
 } ____cacheline_aligned;
 
+enum gve_l3_type {
+	/* Must be zero so zero initialized LUT is unknown. */
+	GVE_L3_TYPE_UNKNOWN = 0,
+	GVE_L3_TYPE_OTHER,
+	GVE_L3_TYPE_IPV4,
+	GVE_L3_TYPE_IPV6,
+};
+
+enum gve_l4_type {
+	/* Must be zero so zero initialized LUT is unknown. */
+	GVE_L4_TYPE_UNKNOWN = 0,
+	GVE_L4_TYPE_OTHER,
+	GVE_L4_TYPE_TCP,
+	GVE_L4_TYPE_UDP,
+	GVE_L4_TYPE_ICMP,
+	GVE_L4_TYPE_SCTP,
+};
+
+/* These are control path types for PTYPE which are the same as the data path
+ * types.
+ */
+struct gve_ptype_entry {
+	u8 l3_type;
+	u8 l4_type;
+};
+
+struct gve_ptype_map {
+	struct gve_ptype_entry ptypes[GVE_NUM_PTYPES]; /* PTYPES are always 10 bits. */
+};
+
 struct gve_ptype {
-	uint8_t l3_type;  /* `gve_l3_type` in gve_adminq.h */
-	uint8_t l4_type;  /* `gve_l4_type` in gve_adminq.h */
+	uint8_t l3_type;  /* `gve_l3_type` */
+	uint8_t l4_type;  /* `gve_l4_type` */
 };
 
 struct gve_ptype_lut {

@@ -4,6 +4,7 @@
 #include <rte_spinlock.h>
 
 #include "base/gve_osdep.h"
+#include "base/gve.h"
 
 /* Mailbox Queue defines */
 #define GVE_MBX_RESET_CTRL		0x0840700C
@@ -125,6 +126,11 @@ enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES		= 0x6001,
 	GVE_MBX_EVENT				= 0x6002,
 	GVE_MBX_GET_INTERRUPT_DBS		= 0x6005,
+	GVE_MBX_GET_PTYPE_MAP			= 0x6006,
+};
+
+struct gve_mbx_get_ptype_map_resp {
+	struct gve_ptype_entry ptypes[GVE_NUM_PTYPES];
 };
 
 struct gve_mbx_get_interrupt_dbs_req {
@@ -244,4 +250,5 @@ int gve_mbx_init(struct gve_priv *priv);
 void gve_mbx_teardown(struct gve_priv *priv);
 int gve_mbx_get_device_properties(struct gve_priv *priv);
 int gve_mbx_get_interrupt_dbs(struct gve_priv *priv);
+int gve_mbx_get_ptype_map(struct gve_priv *priv);
 

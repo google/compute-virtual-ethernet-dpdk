@@ -419,35 +419,6 @@ enum gve_stat_names {
 	RX_DROPS_INVALID_CHECKSUM	= 68,
 };
 
-enum gve_l3_type {
-	/* Must be zero so zero initialized LUT is unknown. */
-	GVE_L3_TYPE_UNKNOWN = 0,
-	GVE_L3_TYPE_OTHER,
-	GVE_L3_TYPE_IPV4,
-	GVE_L3_TYPE_IPV6,
-};
-
-enum gve_l4_type {
-	/* Must be zero so zero initialized LUT is unknown. */
-	GVE_L4_TYPE_UNKNOWN = 0,
-	GVE_L4_TYPE_OTHER,
-	GVE_L4_TYPE_TCP,
-	GVE_L4_TYPE_UDP,
-	GVE_L4_TYPE_ICMP,
-	GVE_L4_TYPE_SCTP,
-};
-
-/* These are control path types for PTYPE which are the same as the data path
- * types.
- */
-struct gve_ptype_entry {
-	u8 l3_type;
-	u8 l4_type;
-};
-
-struct gve_ptype_map {
-	struct gve_ptype_entry ptypes[1 << 10]; /* PTYPES are always 10 bits. */
-};
 
 struct gve_adminq_get_ptype_map {
 	__be64 ptype_map_len;
