@@ -1438,35 +1438,47 @@ gve_setup_device_resources(struct gve_priv *priv)
 	const struct rte_memzone *mz;
 	int err = 0;
 
-	snprintf(z_name, sizeof(z_name), "gve_%s_cnt_arr", priv->pci_dev->device.name);
-	mz = rte_memzone_reserve_aligned(z_name,
-					 priv->num_event_counters * sizeof(*priv->cnt_array),
-					 rte_socket_id(), RTE_MEMZONE_IOVA_CONTIG,
-					 PAGE_SIZE);
-	if (mz == NULL) {
-		PMD_DRV_LOG(ERR, "Could not alloc memzone for count array");
-		return -ENOMEM;
-	}
-	priv->cnt_array = (rte_be32_t *)mz->addr;
-	priv->cnt_array_mz = mz;
+	/* TODO: Refactor to clean up for upstreaming. Ideally, branching on mode
+	 * should be kept to a minimum, so we can rely just on control ops to
+	 * decide behavior.
+	 */
+	if (!gve_is_mailbox(priv)) {
+		snprintf(z_name, sizeof(z_name), "gve_%s_cnt_arr", priv->pci_dev->device.name);
+		mz = rte_memzone_reserve_aligned(z_name,
+				priv->num_event_counters * sizeof(*priv->cnt_array),
+				rte_socket_id(), RTE_MEMZONE_IOVA_CONTIG,
+				PAGE_SIZE);
+		if (mz == NULL) {
+			PMD_DRV_LOG(ERR, "Could not alloc memzone for count array");
+			return -ENOMEM;
+		}
+		priv->cnt_array = (rte_be32_t *)mz->addr;
+		priv->cnt_array_mz = mz;
 
-	snprintf(z_name, sizeof(z_name), "gve_%s_irqmz", priv->pci_dev->device.name);
-	mz = rte_memzone_reserve_aligned(z_name,
-					 sizeof(*priv->irq_dbs) * (priv->num_ntfy_blks),
-					 rte_socket_id(), RTE_MEMZONE_IOVA_CONTIG,
-					 PAGE_SIZE);
-	if (mz == NULL) {
-		PMD_DRV_LOG(ERR, "Could not alloc memzone for irq_dbs");
-		err = -ENOMEM;
-		goto free_cnt_array;
-	}
-	priv->irq_dbs = (struct gve_irq_db *)mz->addr;
-	priv->irq_dbs_mz = mz;
+		snprintf(z_name, sizeof(z_name), "gve_%s_irqmz", priv->pci_dev->device.name);
+		mz = rte_memzone_reserve_aligned(z_name,
+				sizeof(*priv->irq_dbs) * priv->num_ntfy_blks,
+				rte_socket_id(), RTE_MEMZONE_IOVA_CONTIG,
+				PAGE_SIZE);
+		if (mz == NULL) {
+			PMD_DRV_LOG(ERR, "Could not alloc memzone for irq_dbs");
+			err = -ENOMEM;
+			goto free_cnt_array;
+		}
+		priv->irq_dbs = (struct gve_irq_db *)mz->addr;
+		priv->irq_dbs_mz = mz;
 
-	err = priv->ctrl_ops->configure_device_resources(priv);
-	if (unlikely(err)) {
-		PMD_DRV_LOG(ERR, "Could not config device resources: err=%d", err);
-		goto free_irq_dbs;
+		err = priv->ctrl_ops->configure_device_resources(priv);
+		if (unlikely(err)) {
+			PMD_DRV_LOG(ERR, "Could not config device resources: err=%d", err);
+			goto free_irq_dbs;
+		}
+	} else {
+		err = priv->ctrl_ops->get_interrupt_dbs(priv);
+		if (unlikely(err)) {
+			PMD_DRV_LOG(ERR, "Could not get interrupt doorbells: err=%d", err);
+			return err;
+		}
 	}
 	if (!gve_is_gqi(priv)) {
 		priv->ptype_lut_dqo = rte_zmalloc("gve_ptype_lut_dqo",
@@ -1608,6 +1620,7 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.init_ctrl_plane = gve_mbx_init,
 	.free_ctrl_plane = gve_mbx_teardown,
 	.get_device_properties = gve_mbx_get_device_properties,
+	.get_interrupt_dbs = gve_mbx_get_interrupt_dbs,
 };
 
 static int

@@ -311,6 +311,7 @@ struct gve_priv {
 	const struct gve_ctrl_ops *ctrl_ops;
 	struct gve_irq_db *irq_dbs; /* array of num_ntfy_blks */
 	const struct rte_memzone *irq_dbs_mz;
+	uint32_t *irq_db_offsets; /* array of num_ntfy_blks for mailbox mode */
 	uint32_t mgmt_msix_idx;
 	rte_be32_t *cnt_array; /* array of num_event_counters */
 	const struct rte_memzone *cnt_array_mz;

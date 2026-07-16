@@ -124,6 +124,23 @@ static inline int gve_mbx_get_err_from_status(int mbx_status) {
 enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES		= 0x6001,
 	GVE_MBX_EVENT				= 0x6002,
+	GVE_MBX_GET_INTERRUPT_DBS		= 0x6005,
+};
+
+struct gve_mbx_get_interrupt_dbs_req {
+	rte_le16_t start_msix_index;
+	rte_le16_t num_vecs;
+};
+
+struct gve_mbx_interrupt_db_info {
+	rte_le32_t irq_db_offset;
+	rte_le32_t irq_coalesce_db_offset;
+};
+
+struct gve_mbx_get_interrupt_dbs_resp {
+	rte_le16_t start_msix_index;
+	rte_le16_t num_vecs;
+	struct gve_mbx_interrupt_db_info info[];
 };
 
 struct gve_mbx_negotiate_caps_req {
@@ -226,4 +243,5 @@ int gve_mbx_reset(struct gve_priv *priv);
 int gve_mbx_init(struct gve_priv *priv);
 void gve_mbx_teardown(struct gve_priv *priv);
 int gve_mbx_get_device_properties(struct gve_priv *priv);
+int gve_mbx_get_interrupt_dbs(struct gve_priv *priv);
 

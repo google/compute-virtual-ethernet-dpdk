@@ -504,6 +504,42 @@ gve_mbx_process_negotiate_caps_resp(struct gve_mailbox *mbx,
 	return 0;
 }
 
+static int
+gve_mbx_process_get_interrupt_dbs_resp(struct gve_mailbox *mbx,
+					struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_get_interrupt_dbs_resp *resp =
+		(struct gve_mbx_get_interrupt_dbs_resp *)recv_msg->va;
+	struct gve_priv *priv = mbx->priv;
+	uint16_t num_vecs = rte_le_to_cpu_16(resp->num_vecs);
+	uint16_t i;
+
+	if (num_vecs == 0) {
+		PMD_DRV_LOG(ERR, "No interrupt vectors returned in GET_INTERRUPT_DBS");
+		return -EINVAL;
+	}
+
+	if (priv->irq_db_offsets == NULL) {
+		priv->irq_db_offsets = rte_zmalloc("gve_irq_db_offsets",
+						   priv->num_ntfy_blks * sizeof(uint32_t),
+						   0);
+		if (priv->irq_db_offsets == NULL) {
+			PMD_DRV_LOG(ERR, "Failed to allocate memory for irq_db_offsets");
+			return -ENOMEM;
+		}
+	}
+
+	for (i = 0; i < num_vecs; i++) {
+		uint16_t vec_id = 1 + i;
+		if (vec_id < priv->num_ntfy_blks) {
+			priv->irq_db_offsets[vec_id] =
+				rte_le_to_cpu_32(resp->info[i].irq_db_offset);
+		}
+	}
+
+	return 0;
+}
+
 static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -512,6 +548,8 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 	switch (opcode) {
 	case GVE_MBX_NEGOTIATE_CAPABILITIES:
 		return gve_mbx_process_negotiate_caps_resp(mbx, recv_msg);
+	case GVE_MBX_GET_INTERRUPT_DBS:
+		return gve_mbx_process_get_interrupt_dbs_resp(mbx, recv_msg);
 	default:
 		err = -EBADMSG;
 	}
@@ -871,3 +909,25 @@ gve_mbx_get_device_properties(struct gve_priv *priv)
 	return err;
 }
 
+int
+gve_mbx_get_interrupt_dbs(struct gve_priv *priv)
+{
+	struct gve_mbx_get_interrupt_dbs_req req;
+	int err;
+
+	/* TODO: Support reading in more vectors than can fit into a single response. */
+
+	if (priv->num_ntfy_blks <= 1)
+		return 0;
+
+	memset(&req, 0, sizeof(req));
+	req.start_msix_index = rte_cpu_to_le_16(1);
+	req.num_vecs = rte_cpu_to_le_16(priv->num_ntfy_blks - 1);
+
+	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_GET_INTERRUPT_DBS,
+				    sizeof(req), (uint8_t *)&req);
+	if (err)
+		PMD_DRV_LOG(ERR, "Failed to get interrupt doorbells over mailbox: %d", err);
+
+	return err;
+}
