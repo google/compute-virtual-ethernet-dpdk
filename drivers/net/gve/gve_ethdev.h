@@ -344,6 +344,12 @@ struct gve_priv {
 	uint16_t max_nb_rxq;
 	uint32_t num_ntfy_blks; /* spilt between TX and RX so must be even */
 
+	uint16_t tx_queue_watchdog_timeout_ms;
+	uint16_t max_packet_buffer_size;
+	uint16_t max_header_buffer_size;
+	uint16_t hash_key_size;
+	uint16_t hash_lut_size;
+
 	struct gve_registers __iomem *reg_bar0; /* see gve_register.h */
 	rte_be32_t __iomem *db_bar; /* "array" of doorbells */
 	struct rte_pci_device *pci_dev;

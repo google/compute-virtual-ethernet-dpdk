@@ -9,6 +9,7 @@
 #include "base/gve_osdep.h"
 #include "gve_register.h"
 #include "gve_ethdev.h"
+#include "gve_version.h"
 
 static int gve_mbx_check_reset_complete(struct gve_priv *priv)
 {
@@ -416,12 +417,101 @@ static void gve_mbx_process_msg_completion(struct gve_mailbox *mbx,
 	rte_spinlock_unlock(&msg_queue->mbx_msg_q_lock);
 }
 
+static int
+gve_mbx_process_negotiate_caps_resp(struct gve_mailbox *mbx,
+				     struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_negotiate_caps_resp *resp =
+		(struct gve_mbx_negotiate_caps_resp *)recv_msg->va;
+	struct gve_priv *priv = mbx->priv;
+	uint64_t negotiated_caps;
+	uint32_t irq_db_offset;
+	uint8_t bar_idx;
+
+	if (rte_le_to_cpu_32(resp->msg_version) != GVE_MBX_CAPS_MSG_V1) {
+		PMD_DRV_LOG(ERR, "Unsupported negotiate caps response version: %u",
+			    rte_le_to_cpu_32(resp->msg_version));
+		return -EINVAL;
+	}
+
+	if (rte_le_to_cpu_32(resp->msg_size) < sizeof(*resp)) {
+		PMD_DRV_LOG(ERR, "Invalid negotiate caps response size: %u",
+			    rte_le_to_cpu_32(resp->msg_size));
+		return -EINVAL;
+	}
+
+	bar_idx = resp->db_bar;
+	priv->db_bar = priv->pci_dev->mem_resource[bar_idx].addr;
+	if (priv->db_bar == NULL) {
+		PMD_DRV_LOG(ERR, "Failed to map doorbell BAR %u", bar_idx);
+		return -ENOMEM;
+	}
+
+	irq_db_offset = rte_le_to_cpu_32(resp->mbx_irq_db_offset);
+	if (priv->db_bar != NULL)
+		mbx->irq_db = (rte_be32_t __iomem *)((uint8_t *)priv->db_bar + irq_db_offset);
+
+	priv->max_nb_txq = rte_le_to_cpu_16(resp->max_tx_num_queues);
+	priv->max_nb_rxq = rte_le_to_cpu_16(resp->max_rx_num_queues);
+
+	priv->default_tx_num_queues = rte_le_to_cpu_16(resp->default_tx_num_queues);
+	priv->default_rx_num_queues = rte_le_to_cpu_16(resp->default_rx_num_queues);
+
+	priv->max_mtu = rte_le_to_cpu_16(resp->max_mtu);
+
+	rte_memcpy(priv->dev_addr.addr_bytes, resp->mac, RTE_ETHER_ADDR_LEN);
+
+	priv->default_tx_desc_cnt = rte_le_to_cpu_16(resp->default_tx_ring_size);
+	priv->default_rx_desc_cnt = rte_le_to_cpu_16(resp->default_rx_ring_size);
+
+	priv->max_tx_desc_cnt = rte_le_to_cpu_16(resp->max_tx_ring_size);
+	priv->max_rx_desc_cnt = rte_le_to_cpu_16(resp->max_rx_ring_size);
+
+	priv->min_tx_desc_cnt = rte_le_to_cpu_16(resp->min_tx_ring_size);
+	priv->min_rx_desc_cnt = rte_le_to_cpu_16(resp->min_rx_ring_size);
+
+	negotiated_caps = rte_le_to_cpu_64(resp->negotiated_caps);
+
+	mbx->msg_queue->msg_timeout_ms = rte_le_to_cpu_16(resp->mbx_response_timeout_ms);
+	priv->num_ntfy_blks = rte_le_to_cpu_16(resp->num_msix_vectors);
+	priv->tx_queue_watchdog_timeout_ms = rte_le_to_cpu_16(resp->tx_queue_watchdog_timeout_ms);
+
+	priv->max_packet_buffer_size = rte_le_to_cpu_16(resp->max_packet_buffer_size);
+	priv->max_header_buffer_size = rte_le_to_cpu_16(resp->max_header_buffer_size);
+
+	priv->hash_key_size = rte_le_to_cpu_16(resp->hash_key_size);
+	priv->hash_lut_size = rte_le_to_cpu_16(resp->hash_lut_size);
+
+	PMD_DRV_LOG(INFO,
+		    "GVE Mailbox Caps: negotiated_caps=0x%" PRIx64 ", db_bar=%u, mbx_irq_db_offset=%u, "
+		    "max_txq=%u, max_rxq=%u, default_tx_q=%u, default_rx_q=%u, max_mtu=%u, "
+		    "tx_ring_sizes(min/default/max)=%u/%u/%u, "
+		    "rx_ring_sizes(min/default/max)=%u/%u/%u, "
+		    "mbx_timeout_ms=%u, num_msix=%u, watchdog_timeout_ms=%u, "
+		    "max_pkt_buf_size=%u, max_hdr_buf_size=%u, hash_key_size=%u, hash_lut_size=%u",
+		    negotiated_caps, bar_idx, irq_db_offset,
+		    priv->max_nb_txq, priv->max_nb_rxq,
+		    priv->default_tx_num_queues, priv->default_rx_num_queues, priv->max_mtu,
+		    priv->min_tx_desc_cnt, priv->default_tx_desc_cnt, priv->max_tx_desc_cnt,
+		    priv->min_rx_desc_cnt, priv->default_rx_desc_cnt, priv->max_rx_desc_cnt,
+		    mbx->msg_queue->msg_timeout_ms, priv->num_ntfy_blks,
+		    priv->tx_queue_watchdog_timeout_ms, priv->max_packet_buffer_size,
+		    priv->max_header_buffer_size, priv->hash_key_size, priv->hash_lut_size);
+
+	PMD_DRV_LOG(INFO, "MAC addr: " RTE_ETHER_ADDR_PRT_FMT,
+		    RTE_ETHER_ADDR_BYTES(&priv->dev_addr));
+
+	return 0;
+}
+
 static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 			       struct gve_dma_mem *recv_msg)
 {
 	int err = 0;
 
 	switch (opcode) {
+	case GVE_MBX_NEGOTIATE_CAPABILITIES:
+		return gve_mbx_process_negotiate_caps_resp(mbx, recv_msg);
 	default:
 		err = -EBADMSG;
 	}
@@ -750,5 +840,34 @@ int gve_mbx_init(struct gve_priv *priv)
 	gve_set_control_plane_ok(priv);
 
 	return 0;
+}
+
+int
+gve_mbx_get_device_properties(struct gve_priv *priv)
+{
+	struct gve_mbx_negotiate_caps_req req;
+	int err;
+
+	memset(&req, 0, sizeof(req));
+	req.msg_version = rte_cpu_to_le_32(GVE_MBX_CAPS_MSG_V1);
+	req.msg_size = rte_cpu_to_le_32(sizeof(req));
+	req.supported_caps = rte_cpu_to_le_64(GVE_MBX_CAP_DQO_RDA);
+	req.os_type = GVE_OS_TYPE_DPDK;
+	req.driver_major = GVE_VERSION_MAJOR;
+	req.driver_minor = GVE_VERSION_MINOR;
+	req.driver_sub = GVE_VERSION_SUB;
+	req.os_version_major = rte_cpu_to_le_32(DPDK_VERSION_MAJOR);
+	req.os_version_minor = rte_cpu_to_le_32(DPDK_VERSION_MINOR);
+	req.os_version_sub = rte_cpu_to_le_32(DPDK_VERSION_SUB);
+
+	populate_driver_version_strings((char *)req.os_version_str,
+					 (char *)req.driver_version_str);
+
+	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_NEGOTIATE_CAPABILITIES,
+				    sizeof(req), (uint8_t *)&req);
+	if (err)
+		PMD_DRV_LOG(ERR, "Failed to negotiate capabilities over mailbox: %d", err);
+
+	return err;
 }
 

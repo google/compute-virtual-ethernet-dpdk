@@ -1607,6 +1607,7 @@ static const struct gve_ctrl_ops gve_adminq_ops = {
 static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.init_ctrl_plane = gve_mbx_init,
 	.free_ctrl_plane = gve_mbx_teardown,
+	.get_device_properties = gve_mbx_get_device_properties,
 };
 
 static int
@@ -1656,8 +1657,12 @@ gve_init_priv(struct gve_priv *priv, bool skip_describe_device)
 	/* gvnic has one Notification Block per MSI-x vector, except for the
 	 * management vector
 	 */
-	priv->num_ntfy_blks = (num_ntfy - 1) & ~0x1;
-	priv->mgmt_msix_idx = priv->num_ntfy_blks;
+	if (gve_is_mailbox(priv)) {
+		priv->mgmt_msix_idx = 0;
+	} else {
+		priv->num_ntfy_blks = (num_ntfy - 1) & ~0x1;
+		priv->mgmt_msix_idx = priv->num_ntfy_blks;
+	}
 
 	priv->max_nb_txq = RTE_MIN(priv->max_nb_txq, priv->num_ntfy_blks / 2);
 	priv->max_nb_rxq = RTE_MIN(priv->max_nb_rxq, priv->num_ntfy_blks / 2);
