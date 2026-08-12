@@ -14,6 +14,7 @@
 #endif
 
 #define GVE_DEV_ID		0x0042
+#define GVE_DEV_ID_MBX		0x0043
 
 #define GVE_REG_BAR		0
 #define GVE_DB_BAR		2

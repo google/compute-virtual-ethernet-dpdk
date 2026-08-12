@@ -447,6 +447,12 @@ gve_is_gqi(struct gve_priv *priv)
 }
 
 static inline bool
+gve_is_mailbox(struct gve_priv *priv)
+{
+	return priv->pci_dev->id.device_id == GVE_DEV_ID_MBX;
+}
+
+static inline bool
 gve_get_control_plane_ok(struct gve_priv *priv)
 {
 	return !!rte_bit_relaxed_get32(GVE_PRIV_FLAGS_CONTROL_PLANE_OK,

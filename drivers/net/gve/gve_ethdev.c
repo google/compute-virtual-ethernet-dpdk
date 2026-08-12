@@ -10,6 +10,7 @@
 #include "gve_version.h"
 #include "rte_ether.h"
 #include "gve_rss.h"
+#include "gve_mailbox.h"
 #include <ethdev_driver.h>
 
 static int gve_init_priv(struct gve_priv *priv, bool skip_describe_device);
@@ -685,11 +686,13 @@ gve_teardown_device_resources(struct gve_priv *priv)
 
 	/* Tell device its resources are being freed */
 	if (gve_get_device_resources_ok(priv)) {
-		err = priv->ctrl_ops->deconfigure_device_resources(priv);
-		if (err)
-			PMD_DRV_LOG(ERR,
-				"Could not deconfigure device resources: err=%d",
-				err);
+		if (priv->ctrl_ops->deconfigure_device_resources) {
+			err = priv->ctrl_ops->deconfigure_device_resources(priv);
+			if (err)
+				PMD_DRV_LOG(ERR,
+					"Could not deconfigure device resources: err=%d",
+					err);
+		}
 	}
 
 	if (priv->nic_ts_report_mz) {
@@ -1512,6 +1515,9 @@ gve_check_device_status(void *arg)
 	uint32_t dev_status;
 	int ret;
 
+	if (gve_is_mailbox(priv))
+		return;
+
 	dev_status = ioread32be(&priv->reg_bar0->device_status);
 
 	if (dev_status & GVE_DEVICE_STATUS_RESET_MASK) {
@@ -1598,13 +1604,21 @@ static const struct gve_ctrl_ops gve_adminq_ops = {
 	.unregister_page_list = gve_adminq_unregister_page_list,
 };
 
+static const struct gve_ctrl_ops gve_mailbox_ops = {
+	.init_ctrl_plane = gve_mbx_init,
+	.free_ctrl_plane = gve_mbx_teardown,
+};
+
 static int
 gve_init_priv(struct gve_priv *priv, bool skip_describe_device)
 {
 	int num_ntfy;
 	int err;
 
-	priv->ctrl_ops = &gve_adminq_ops;
+	if (gve_is_mailbox(priv))
+		priv->ctrl_ops = &gve_mailbox_ops;
+	else
+		priv->ctrl_ops = &gve_adminq_ops;
 
 	err = priv->ctrl_ops->init_ctrl_plane(priv);
 	if (err) {
@@ -1677,11 +1691,10 @@ static int
 gve_dev_init(struct rte_eth_dev *eth_dev)
 {
 	struct gve_priv *priv = eth_dev->data->dev_private;
-	int max_tx_queues, max_rx_queues;
 	struct rte_pci_device *pci_dev;
 	struct gve_registers *reg_bar;
 	pthread_mutexattr_t mutexattr;
-	rte_be32_t *db_bar;
+	rte_be32_t *db_bar = NULL;
 	int err;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
@@ -1705,24 +1718,20 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 		return -ENOMEM;
 	}
 
-	db_bar = pci_dev->mem_resource[GVE_DB_BAR].addr;
-	if (!db_bar) {
-		PMD_DRV_LOG(ERR, "Failed to map doorbell bar!");
-		return -ENOMEM;
+	if (pci_dev->id.device_id != GVE_DEV_ID_MBX) {
+		db_bar = pci_dev->mem_resource[GVE_DB_BAR].addr;
+		if (!db_bar) {
+			PMD_DRV_LOG(ERR, "Failed to map doorbell bar!");
+			return -ENOMEM;
+		}
 	}
 
 	gve_write_version(&reg_bar->driver_version);
-	/* Get max queues to alloc etherdev */
-	max_tx_queues = ioread32be(&reg_bar->max_tx_queues);
-	max_rx_queues = ioread32be(&reg_bar->max_rx_queues);
 
 	priv->reg_bar0 = reg_bar;
 	priv->db_bar = db_bar;
 	priv->pci_dev = pci_dev;
 	priv->state_flags = 0x0;
-
-	priv->max_nb_txq = max_tx_queues;
-	priv->max_nb_rxq = max_rx_queues;
 
 	pthread_mutexattr_init(&mutexattr);
 	pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED);

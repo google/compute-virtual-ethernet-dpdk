@@ -287,6 +287,9 @@ int gve_adminq_alloc(struct gve_priv *priv)
 			    &priv->reg_bar0->driver_status);
 	}
 
+	priv->max_nb_txq = ioread32be(&priv->reg_bar0->max_tx_queues);
+	priv->max_nb_rxq = ioread32be(&priv->reg_bar0->max_rx_queues);
+
 	gve_set_control_plane_ok(priv);
 	return 0;
 }
