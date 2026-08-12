@@ -1717,7 +1717,7 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 	max_rx_queues = ioread32be(&reg_bar->max_rx_queues);
 
 	priv->reg_bar0 = reg_bar;
-	priv->db_bar2 = db_bar;
+	priv->db_bar = db_bar;
 	priv->pci_dev = pci_dev;
 	priv->state_flags = 0x0;
 
