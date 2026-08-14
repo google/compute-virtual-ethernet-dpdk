@@ -5,6 +5,7 @@
 
 #include "base/gve_osdep.h"
 #include "base/gve.h"
+#include "gve_flow_rule.h"
 
 /* Mailbox Queue defines */
 #define GVE_MBX_RESET_CTRL		0x0840700C
@@ -136,6 +137,9 @@ enum gve_mbx_opcode {
 	GVE_MBX_DISABLE_RX_QUEUES		= 0x600f,
 	GVE_MBX_QUERY_RSS			= 0x6010,
 	GVE_MBX_CONFIGURE_RSS			= 0x6011,
+	GVE_MBX_ADD_FLOW_RULE			= 0x6015,
+	GVE_MBX_DEL_FLOW_RULE			= 0x6016,
+	GVE_MBX_RESET_FLOW_RULES		= 0x6017,
 };
 
 struct gve_mbx_event {
@@ -357,10 +361,36 @@ struct gve_mbx_rss_info {
 	rte_le32_t hash_lut[];
 };
 
+/**
+ * struct gve_mbx_add_flow_rule - request for ADD_FLOW_RULE
+ *
+ * @rule_id: ID of rule to add.
+ * @rule: flow spec for rule.
+ */
+struct gve_mbx_add_flow_rule_req {
+	__le32 rule_id;
+	struct gve_flow_rule_params rule;
+};
+
+
+/**
+ * struct gve_mbx_del_flow_rule_req - request for DEL_FLOW_RULE
+ *
+ * @rule_id: ID of rule to delete.
+ */
+struct gve_mbx_del_flow_rule_req {
+	__le32 rule_id;
+};
+
 struct gve_rss_config;
 int gve_mbx_query_rss(struct gve_priv *priv);
 int gve_mbx_configure_rss(struct gve_priv *priv,
 			  struct gve_rss_config *rss_config);
+
+int gve_mbx_add_flow_rule(struct gve_priv *priv,
+			  struct gve_flow_rule_params *rule, uint32_t rule_id);
+int gve_mbx_delete_flow_rule(struct gve_priv *priv, uint32_t rule_id);
+int gve_mbx_reset_flow_rules(struct gve_priv *priv);
 
 int gve_mbx_reset(struct gve_priv *priv);
 int gve_mbx_init(struct gve_priv *priv);

@@ -677,6 +677,9 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 	case GVE_MBX_DISABLE_TX_QUEUES:
 	case GVE_MBX_DISABLE_RX_QUEUES:
 	case GVE_MBX_CONFIGURE_RSS:
+	case GVE_MBX_ADD_FLOW_RULE:
+	case GVE_MBX_DEL_FLOW_RULE:
+	case GVE_MBX_RESET_FLOW_RULES:
 		break;
 	default:
 		err = -EBADMSG;
@@ -993,6 +996,37 @@ int gve_mbx_configure_rss(struct gve_priv *priv,
 
 	rte_free(req);
 	return err;
+}
+
+int gve_mbx_add_flow_rule(struct gve_priv *priv,
+			  struct gve_flow_rule_params *rule, uint32_t rule_id)
+{
+	struct gve_mbx_add_flow_rule_req req = {0};
+
+	req.rule_id = rte_cpu_to_le_32(rule_id);
+	req.rule.flow_type = rte_cpu_to_le_16(rule->flow_type);
+	req.rule.action = rte_cpu_to_le_16(rule->action);
+	req.rule.key = rule->key;
+	req.rule.mask = rule->mask;
+
+	return gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_ADD_FLOW_RULE,
+				     sizeof(req), (uint8_t *)&req);
+
+}
+
+int gve_mbx_delete_flow_rule(struct gve_priv *priv, uint32_t rule_id)
+{
+	struct gve_mbx_del_flow_rule_req req;
+
+	req.rule_id = rte_cpu_to_le_32(rule_id);
+	return gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_DEL_FLOW_RULE,
+				     sizeof(req), (uint8_t *)&req);
+}
+
+int gve_mbx_reset_flow_rules(struct gve_priv *priv)
+{
+	return gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_RESET_FLOW_RULES, 0,
+				     NULL);
 }
 
 static void gve_mbx_task(void *arg)
