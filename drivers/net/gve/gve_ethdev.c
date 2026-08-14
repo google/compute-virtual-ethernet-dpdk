@@ -368,30 +368,12 @@ gve_start_queues(struct rte_eth_dev *dev)
 	uint16_t i;
 	int ret;
 
-	num_queues = dev->data->nb_tx_queues;
-	priv->txqs = (struct gve_tx_queue **)dev->data->tx_queues;
-	ret = priv->ctrl_ops->create_tx_queues(priv, num_queues);
-	if (ret != 0) {
-		PMD_DRV_LOG(ERR, "Failed to create %u tx queues.", num_queues);
-		return ret;
-	}
-	for (i = 0; i < num_queues; i++) {
-		if (gve_is_gqi(priv))
-			ret = gve_tx_queue_start(dev, i);
-		else
-			ret = gve_tx_queue_start_dqo(dev, i);
-		if (ret != 0) {
-			PMD_DRV_LOG(ERR, "Fail to start Tx queue %d", i);
-			goto err_tx;
-		}
-	}
-
 	num_queues = dev->data->nb_rx_queues;
 	priv->rxqs = (struct gve_rx_queue **)dev->data->rx_queues;
 	ret = priv->ctrl_ops->create_rx_queues(priv, num_queues);
 	if (ret != 0) {
 		PMD_DRV_LOG(ERR, "Failed to create %u rx queues.", num_queues);
-		goto err_tx;
+		return ret;
 	}
 	for (i = 0; i < num_queues; i++) {
 		if (gve_is_gqi(priv))
@@ -404,20 +386,38 @@ gve_start_queues(struct rte_eth_dev *dev)
 		}
 	}
 
+	num_queues = dev->data->nb_tx_queues;
+	priv->txqs = (struct gve_tx_queue **)dev->data->tx_queues;
+	ret = priv->ctrl_ops->create_tx_queues(priv, num_queues);
+	if (ret != 0) {
+		PMD_DRV_LOG(ERR, "Failed to create %u tx queues.", num_queues);
+		goto err_rx;
+	}
+	for (i = 0; i < num_queues; i++) {
+		if (gve_is_gqi(priv))
+			ret = gve_tx_queue_start(dev, i);
+		else
+			ret = gve_tx_queue_start_dqo(dev, i);
+		if (ret != 0) {
+			PMD_DRV_LOG(ERR, "Fail to start Tx queue %d", i);
+			goto err_tx;
+		}
+	}
+
 	gve_set_device_rings_ok(priv);
 
 	return 0;
 
-err_rx:
-	if (gve_is_gqi(priv))
-		gve_stop_rx_queues(dev);
-	else
-		gve_stop_rx_queues_dqo(dev);
 err_tx:
 	if (gve_is_gqi(priv))
 		gve_stop_tx_queues(dev);
 	else
 		gve_stop_tx_queues_dqo(dev);
+err_rx:
+	if (gve_is_gqi(priv))
+		gve_stop_rx_queues(dev);
+	else
+		gve_stop_rx_queues_dqo(dev);
 
 	gve_clear_device_rings_ok(priv);
 	return ret;
@@ -1622,6 +1622,10 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.get_device_properties = gve_mbx_get_device_properties,
 	.get_interrupt_dbs = gve_mbx_get_interrupt_dbs,
 	.get_ptype_map = gve_mbx_get_ptype_map,
+	.create_tx_queues = gve_mbx_create_tx_queues,
+	.destroy_tx_queues = gve_mbx_destroy_tx_queues,
+	.create_rx_queues = gve_mbx_create_rx_queues,
+	.destroy_rx_queues = gve_mbx_destroy_rx_queues,
 };
 
 static int

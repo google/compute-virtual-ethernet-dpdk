@@ -5,6 +5,7 @@
 
 
 #include "gve_ethdev.h"
+#include "gve_mailbox.h"
 #include "base/gve_adminq.h"
 #include "rte_mbuf_ptype.h"
 #include "rte_atomic.h"
@@ -366,11 +367,18 @@ gve_rx_queue_setup_dqo(struct rte_eth_dev *dev, uint16_t queue_id,
 	rxq->free_thresh = free_thresh;
 	rxq->queue_id = queue_id;
 	rxq->port_id = dev->data->port_id;
-	rxq->ntfy_id = hw->num_ntfy_blks / 2 + queue_id;
+	if (gve_is_mailbox(hw))
+		rxq->ntfy_id = hw->max_nb_txq + queue_id + 1;
+	else
+		rxq->ntfy_id = hw->num_ntfy_blks / 2 + queue_id;
 
 	rxq->mpool = pool;
 	rxq->hw = hw;
-	rxq->ntfy_addr = &hw->db_bar[rte_be_to_cpu_32(hw->irq_dbs[rxq->ntfy_id].id)];
+	if (gve_is_mailbox(hw))
+		rxq->ntfy_addr = (rte_be32_t __iomem *)
+			((uint8_t *)hw->db_bar + hw->irq_db_offsets[rxq->ntfy_id]);
+	else
+		rxq->ntfy_addr = &hw->db_bar[rte_be_to_cpu_32(hw->irq_dbs[rxq->ntfy_id].id)];
 
 	mbuf_len =
 		rte_pktmbuf_data_room_size(rxq->mpool) - RTE_PKTMBUF_HEADROOM;
@@ -519,7 +527,8 @@ gve_rx_queue_start_dqo(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 
 	rxq = dev->data->rx_queues[rx_queue_id];
 
-	rxq->qrx_tail = &hw->db_bar[rte_be_to_cpu_32(rxq->qres->db_index)];
+	if (!gve_is_mailbox(hw))
+		rxq->qrx_tail = &hw->db_bar[rte_be_to_cpu_32(rxq->qres->db_index)];
 
 	rte_write32(rte_cpu_to_le_32(GVE_NO_INT_MODE_DQO |
 				     GVE_ITR_NO_UPDATE_DQO),

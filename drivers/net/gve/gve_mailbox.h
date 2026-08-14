@@ -127,7 +127,92 @@ enum gve_mbx_opcode {
 	GVE_MBX_EVENT				= 0x6002,
 	GVE_MBX_GET_INTERRUPT_DBS		= 0x6005,
 	GVE_MBX_GET_PTYPE_MAP			= 0x6006,
+	GVE_MBX_CONFIG_TX_QUEUES		= 0x6008,
+	GVE_MBX_CONFIG_RX_QUEUES		= 0x6009,
+	GVE_MBX_ENABLE_TX_QUEUES		= 0x600c,
+	GVE_MBX_ENABLE_RX_QUEUES		= 0x600d,
+	GVE_MBX_DISABLE_TX_QUEUES		= 0x600e,
+	GVE_MBX_DISABLE_RX_QUEUES		= 0x600f,
 };
+
+#define GVE_MBX_NO_INTERRUPT 0xffff
+#define GVE_RAW_ADDRESSING_QPL_ID 0xFFFFFFFF
+
+struct gve_mbx_tx_queue_info {
+	rte_le32_t queue_id;
+	rte_le16_t msix_vector;
+	rte_le16_t reserved1;
+	rte_le32_t queue_page_list_id;
+	rte_le32_t reserved2;
+	rte_le64_t ring_base_addr;
+	rte_le64_t comp_ring_base_addr;
+	rte_le16_t ring_size;
+	rte_le16_t comp_ring_size;
+	rte_le32_t reserved3;
+} __packed;
+
+struct gve_mbx_config_tx_queues_req {
+	rte_le16_t num_queues;
+	rte_le16_t reserved[3];
+	struct gve_mbx_tx_queue_info queues[];
+} __packed;
+
+struct gve_mbx_configured_tx_queue_info {
+	rte_le32_t queue_id;
+	rte_le32_t tail_db_offset;
+} __packed;
+
+struct gve_mbx_config_tx_queues_resp {
+	rte_le16_t num_queues;
+	rte_le16_t reserved[3];
+	struct gve_mbx_configured_tx_queue_info queues[];
+} __packed;
+
+struct gve_mbx_rx_queue_info {
+	rte_le32_t queue_id;
+	rte_le16_t msix_vector;
+	rte_le16_t reserved1;
+	rte_le32_t queue_page_list_id;
+	rte_le32_t flags;
+	rte_le64_t ring_base_addr;
+	rte_le64_t data_ring_base_addr;
+	rte_le16_t ring_size;
+	rte_le16_t data_ring_size;
+	rte_le16_t packet_buf_size;
+	rte_le16_t header_buf_size;
+} __packed;
+
+struct gve_mbx_config_rx_queues_req {
+	rte_le16_t num_queues;
+	rte_le16_t reserved[3];
+	struct gve_mbx_rx_queue_info queues[];
+} __packed;
+
+struct gve_mbx_configured_rx_queue_info {
+	rte_le32_t queue_id;
+	rte_le32_t tail_db_offset;
+} __packed;
+
+struct gve_mbx_config_rx_queues_resp {
+	rte_le16_t num_queues;
+	rte_le16_t reserved[3];
+	struct gve_mbx_configured_rx_queue_info queues[];
+} __packed;
+
+struct gve_mbx_enable_tx_queues_req {
+	rte_le16_t num_queues;
+	rte_le16_t queue_ids[];
+} __packed;
+
+struct gve_mbx_enable_rx_queues_req {
+	rte_le16_t num_queues;
+	rte_le16_t queue_ids[];
+} __packed;
+
+struct gve_mbx_disable_queues_req {
+	rte_le16_t num_queues;
+	rte_le16_t queue_ids[];
+} __packed;
 
 struct gve_mbx_get_ptype_map_resp {
 	struct gve_ptype_entry ptypes[GVE_NUM_PTYPES];
@@ -251,4 +336,8 @@ void gve_mbx_teardown(struct gve_priv *priv);
 int gve_mbx_get_device_properties(struct gve_priv *priv);
 int gve_mbx_get_interrupt_dbs(struct gve_priv *priv);
 int gve_mbx_get_ptype_map(struct gve_priv *priv);
+int gve_mbx_create_tx_queues(struct gve_priv *priv, uint32_t num_queues);
+int gve_mbx_destroy_tx_queues(struct gve_priv *priv, uint32_t num_queues);
+int gve_mbx_create_rx_queues(struct gve_priv *priv, uint32_t num_queues);
+int gve_mbx_destroy_rx_queues(struct gve_priv *priv, uint32_t num_queues);
 
