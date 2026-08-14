@@ -621,6 +621,35 @@ gve_mbx_process_report_link_status_resp(struct gve_mailbox *mbx,
 	return 0;
 }
 
+static int gve_mbx_process_query_rss(struct gve_mailbox *mbx,
+				     struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_rss_info* config = recv_msg->va;
+	struct gve_rss_config new_config;
+	int err;
+	int i;
+
+	err = gve_init_rss_config(&new_config,
+				  rte_le_to_cpu_16(config->hash_key_size),
+				  rte_le_to_cpu_16(config->hash_lut_size));
+	if (err)
+		return err;
+
+	new_config.hash_types = rte_le_to_cpu_16(config->hash_types);
+	memcpy(new_config.key, config->hash_key, new_config.key_size);
+
+	for (i = 0; i < new_config.indir_size; i++)
+		new_config.indir[i] = rte_le_to_cpu_32(config->hash_lut[i]);
+
+	err = gve_update_priv_rss_config(mbx->priv, &new_config);
+	if (err)
+		PMD_DRV_LOG(ERR,
+			    "Failed to record new RSS configuration into priv.");
+
+	gve_free_rss_config(&new_config);
+	return err;
+}
+
 static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -639,6 +668,9 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 		return gve_mbx_process_config_tx_queues_resp(mbx, recv_msg);
 	case GVE_MBX_CONFIG_RX_QUEUES:
 		return gve_mbx_process_config_rx_queues_resp(mbx, recv_msg);
+	case GVE_MBX_QUERY_RSS:
+		gve_mbx_process_query_rss(mbx, recv_msg);
+		break;
 	/* No processing needed. */
 	case GVE_MBX_ENABLE_TX_QUEUES:
 	case GVE_MBX_ENABLE_RX_QUEUES:
@@ -911,6 +943,12 @@ err_unlock:
 	pthread_cond_destroy(&mbx_msg->comp.cond);
 	rte_free(mbx_msg);
 	return err;
+}
+
+int gve_mbx_query_rss(struct gve_priv *priv)
+{
+	/* Output is recorded into priv if successful. */
+	return gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_QUERY_RSS, 0, NULL);
 }
 
 int gve_mbx_configure_rss(struct gve_priv *priv,

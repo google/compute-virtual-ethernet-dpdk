@@ -134,6 +134,7 @@ enum gve_mbx_opcode {
 	GVE_MBX_ENABLE_RX_QUEUES		= 0x600d,
 	GVE_MBX_DISABLE_TX_QUEUES		= 0x600e,
 	GVE_MBX_DISABLE_RX_QUEUES		= 0x600f,
+	GVE_MBX_QUERY_RSS			= 0x6010,
 	GVE_MBX_CONFIGURE_RSS			= 0x6011,
 };
 
@@ -357,6 +358,7 @@ struct gve_mbx_rss_info {
 };
 
 struct gve_rss_config;
+int gve_mbx_query_rss(struct gve_priv *priv);
 int gve_mbx_configure_rss(struct gve_priv *priv,
 			  struct gve_rss_config *rss_config);
 
