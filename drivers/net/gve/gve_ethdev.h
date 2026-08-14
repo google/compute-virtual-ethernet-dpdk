@@ -292,7 +292,7 @@ struct gve_ctrl_ops {
 	int (*deconfigure_device_resources)(struct gve_priv *priv);
 	int (*report_link_status)(struct gve_priv *priv);
 	int (*report_link_speed)(struct gve_priv *priv);
-	int (*query_rss)(struct gve_priv *priv, struct gve_rss_config *rss_conf);
+	int (*query_rss)(struct gve_priv *priv);
 	int (*configure_rss)(struct gve_priv *priv, struct gve_rss_config *rss_conf);
 	int (*add_flow_rule)(struct gve_priv *priv, struct gve_flow_rule_params *rule, uint32_t loc);
 	int (*del_flow_rule)(struct gve_priv *priv, uint32_t loc);
