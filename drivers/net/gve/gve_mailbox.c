@@ -623,12 +623,6 @@ static int gve_mbx_receive_msg(struct gve_mailbox *mbx)
 		goto update_tail;
 	}
 
-	if (!recv_desc->buf_len) {
-		err = -EBADMSG;
-		PMD_DRV_LOG(ERR, "Unexpected zero-length message received.");
-		goto update_tail;
-	}
-
 	err = gve_mbx_process_msg(mbx, opcode, recv_msg);
 	gve_mbx_process_msg_completion(mbx, recv_desc);
 
