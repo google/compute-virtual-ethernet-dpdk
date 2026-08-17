@@ -1100,6 +1100,27 @@ gve_xstats_get_names(struct rte_eth_dev *dev,
 	return count;
 }
 
+static int
+gve_rss_update_cache(struct gve_priv *priv)
+{
+	if (priv->rss_cache_dirty) {
+		if (!priv->ctrl_ops->query_rss) {
+			PMD_DRV_LOG(ERR,
+				    "No RSS query functionality present in ops table");
+			return -ENOENT;
+		}
+
+		priv->ctrl_ops->query_rss(priv);
+		if (priv->rss_cache_dirty) {
+			PMD_DRV_LOG(ERR,
+				    "RSS cache not updated after querying device.");
+			return -ENODATA;
+		}
+	}
+
+	return 0;
+}
+
 
 static int
 gve_rss_hash_update(struct rte_eth_dev *dev,
@@ -1150,6 +1171,10 @@ gve_rss_hash_update(struct rte_eth_dev *dev,
 	if (err)
 		return err;
 
+	err = gve_rss_update_cache(priv);
+	if (err)
+		return err;
+
 	gve_rss_conf.alg = GVE_RSS_HASH_TOEPLITZ;
 	err = gve_update_rss_hash_types(priv, &gve_rss_conf, rss_conf);
 	if (err)
@@ -1177,6 +1202,7 @@ gve_rss_hash_conf_get(struct rte_eth_dev *dev,
 			struct rte_eth_rss_conf *rss_conf)
 {
 	struct gve_priv *priv = dev->data->dev_private;
+	int err;
 
 	if (!(dev->data->dev_conf.rxmode.offloads &
 			RTE_ETH_RX_OFFLOAD_RSS_HASH)) {
@@ -1184,6 +1210,9 @@ gve_rss_hash_conf_get(struct rte_eth_dev *dev,
 		return -ENOTSUP;
 	}
 
+	err = gve_rss_update_cache(priv);
+	if (err)
+		return err;
 
 	gve_to_rte_rss_hf(priv->rss_config.hash_types, rss_conf);
 	rss_conf->rss_key_len = priv->rss_config.key_size;
@@ -1208,6 +1237,10 @@ gve_rss_reta_update(struct rte_eth_dev *dev,
 	int table_id;
 	int err;
 	int i;
+
+	err = gve_rss_update_cache(priv);
+	if (err)
+		return err;
 
 	/* RSS key must be set before the redirection table can be set. */
 	if (!priv->rss_config.key || priv->rss_config.key_size == 0) {
@@ -1261,17 +1294,25 @@ gve_rss_reta_query(struct rte_eth_dev *dev,
 		return -ENOTSUP;
 	}
 
-	/* RSS key must be set before the redirection table can be queried. */
-	if (!priv->rss_config.key) {
-		PMD_DRV_LOG(ERR, "RSS hash key must be set before the "
-			"redirection table can be initialized.");
-		return -ENOTSUP;
-	}
+	if (priv->ctrl_ops->query_rss) {
+		if (priv->rss_cache_dirty) {
+			priv->ctrl_ops->query_rss(priv);
+			if (priv->rss_cache_dirty)
+				return -ENODATA;
+		}
+	} else {
+		/* RSS key must be set before the redirection table can be queried. */
+		if (!priv->rss_config.key) {
+			PMD_DRV_LOG(ERR, "RSS hash key must be set before the "
+				"redirection table can be initialized.");
+			return -ENOTSUP;
+		}
 
-	if (reta_size != priv->rss_config.indir_size) {
-		PMD_DRV_LOG(ERR, "RSS redirection table must have %d entries.",
-			priv->rss_config.indir_size);
-		return -EINVAL;
+		if (reta_size != priv->rss_config.indir_size) {
+			PMD_DRV_LOG(ERR, "RSS redirection table must have %d entries.",
+				priv->rss_config.indir_size);
+			return -EINVAL;
+		}
 	}
 
 	table_id = 0;
@@ -1692,6 +1733,7 @@ gve_init_priv(struct gve_priv *priv, bool skip_describe_device)
 		    priv->max_nb_txq, priv->max_nb_rxq);
 
 setup_device:
+	priv->rss_cache_dirty = true;
 	if (priv->max_flow_rules) {
 		err = gve_setup_flow_subsystem(priv);
 		if (err)

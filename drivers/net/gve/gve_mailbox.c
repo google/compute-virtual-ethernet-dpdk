@@ -989,6 +989,8 @@ int gve_mbx_configure_rss(struct gve_priv *priv,
 		PMD_DRV_LOG(ERR,
 			    "Failure in sending GVE_MBX_CONFIGURE_RSS message.");
 
+	priv->rss_cache_dirty = true;
+
 	rte_free(req);
 	return err;
 }

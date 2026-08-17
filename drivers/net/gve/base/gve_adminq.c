@@ -1279,6 +1279,7 @@ int gve_adminq_configure_rss(struct gve_priv *priv,
 	};
 
 	err = gve_adminq_execute_cmd(priv, &cmd);
+	priv->rss_cache_dirty = true;
 	if (!err)
 		gve_update_priv_rss_config(priv, rss_config);
 
