@@ -1800,6 +1800,7 @@ gve_pci_remove(struct rte_pci_device *pci_dev)
 
 static const struct rte_pci_id pci_id_gve_map[] = {
 	{ RTE_PCI_DEVICE(GOOGLE_VENDOR_ID, GVE_DEV_ID) },
+	{ RTE_PCI_DEVICE(GOOGLE_VENDOR_ID, GVE_DEV_ID_MBX) },
 	{ .device_id = 0 },
 };
 
