@@ -127,6 +127,7 @@ enum gve_mbx_opcode {
 	GVE_MBX_EVENT				= 0x6002,
 	GVE_MBX_GET_INTERRUPT_DBS		= 0x6005,
 	GVE_MBX_GET_PTYPE_MAP			= 0x6006,
+	GVE_MBX_REPORT_LINK_STATUS		= 0x6007,
 	GVE_MBX_CONFIG_TX_QUEUES		= 0x6008,
 	GVE_MBX_CONFIG_RX_QUEUES		= 0x6009,
 	GVE_MBX_ENABLE_TX_QUEUES		= 0x600c,
@@ -216,6 +217,12 @@ struct gve_mbx_disable_queues_req {
 
 struct gve_mbx_get_ptype_map_resp {
 	struct gve_ptype_entry ptypes[GVE_NUM_PTYPES];
+};
+
+struct gve_mbx_report_link_status_resp {
+	rte_le64_t link_speed;
+	uint8_t link_status;
+	uint8_t reserved[7];
 };
 
 struct gve_mbx_get_interrupt_dbs_req {
@@ -336,6 +343,7 @@ void gve_mbx_teardown(struct gve_priv *priv);
 int gve_mbx_get_device_properties(struct gve_priv *priv);
 int gve_mbx_get_interrupt_dbs(struct gve_priv *priv);
 int gve_mbx_get_ptype_map(struct gve_priv *priv);
+int gve_mbx_report_link_speed(struct gve_priv *priv);
 int gve_mbx_create_tx_queues(struct gve_priv *priv, uint32_t num_queues);
 int gve_mbx_destroy_tx_queues(struct gve_priv *priv, uint32_t num_queues);
 int gve_mbx_create_rx_queues(struct gve_priv *priv, uint32_t num_queues);

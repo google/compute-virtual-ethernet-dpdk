@@ -386,6 +386,7 @@ struct gve_priv {
 
 	/* Gvnic device link speed from hypervisor. */
 	uint64_t link_speed;
+	uint8_t link_status;
 
 	uint16_t max_mtu;
 	struct rte_ether_addr dev_addr; /* mac address */

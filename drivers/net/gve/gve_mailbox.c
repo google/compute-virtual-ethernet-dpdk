@@ -607,6 +607,19 @@ gve_mbx_process_config_rx_queues_resp(struct gve_mailbox *mbx,
 	return 0;
 }
 
+static int
+gve_mbx_process_report_link_status_resp(struct gve_mailbox *mbx,
+					struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_report_link_status_resp *resp =
+		(struct gve_mbx_report_link_status_resp *)recv_msg->va;
+	struct gve_priv *priv = mbx->priv;
+
+	priv->link_status = resp->link_status;
+	priv->link_speed = rte_le_to_cpu_64(resp->link_speed);
+	return 0;
+}
+
 static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -619,6 +632,8 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 		return gve_mbx_process_get_interrupt_dbs_resp(mbx, recv_msg);
 	case GVE_MBX_GET_PTYPE_MAP:
 		return gve_mbx_process_get_ptype_map_resp(mbx, recv_msg);
+	case GVE_MBX_REPORT_LINK_STATUS:
+		return gve_mbx_process_report_link_status_resp(mbx, recv_msg);
 	case GVE_MBX_CONFIG_TX_QUEUES:
 		return gve_mbx_process_config_tx_queues_resp(mbx, recv_msg);
 	case GVE_MBX_CONFIG_RX_QUEUES:
@@ -1012,6 +1027,18 @@ gve_mbx_get_ptype_map(struct gve_priv *priv)
 	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_GET_PTYPE_MAP, 0, NULL);
 	if (err)
 		PMD_DRV_LOG(ERR, "Failed to get ptype map over mailbox: %d", err);
+
+	return err;
+}
+
+int
+gve_mbx_report_link_speed(struct gve_priv *priv)
+{
+	int err;
+
+	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_REPORT_LINK_STATUS, 0, NULL);
+	if (err)
+		PMD_DRV_LOG(ERR, "Failed to report link speed over mailbox: %d", err);
 
 	return err;
 }

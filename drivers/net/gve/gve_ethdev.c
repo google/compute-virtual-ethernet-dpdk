@@ -269,17 +269,18 @@ gve_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complete)
 		link.link_status = RTE_ETH_LINK_DOWN;
 		link.link_speed = RTE_ETH_SPEED_NUM_NONE;
 	} else {
-		link.link_status = RTE_ETH_LINK_UP;
 		PMD_DRV_LOG(DEBUG, "Get link status from hw");
-		/* TODO: remove when report_link_speed is implemented */
-		if (priv->ctrl_ops->report_link_speed) {
-			err = priv->ctrl_ops->report_link_speed(priv);
-			if (err) {
-				PMD_DRV_LOG(ERR, "Failed to get link speed.");
-				priv->link_speed = RTE_ETH_SPEED_NUM_UNKNOWN;
-			}
+		err = priv->ctrl_ops->report_link_speed(priv);
+		if (err) {
+			PMD_DRV_LOG(ERR, "Failed to get link speed.");
+			priv->link_speed = RTE_ETH_SPEED_NUM_UNKNOWN;
 		}
 		link.link_speed = priv->link_speed;
+
+		if (gve_is_mailbox(priv))
+			link.link_status = priv->link_status ? RTE_ETH_LINK_UP : RTE_ETH_LINK_DOWN;
+		else
+			link.link_status = RTE_ETH_LINK_UP;
 	}
 
 	return rte_eth_linkstatus_set(dev, &link);
@@ -1622,6 +1623,7 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.get_device_properties = gve_mbx_get_device_properties,
 	.get_interrupt_dbs = gve_mbx_get_interrupt_dbs,
 	.get_ptype_map = gve_mbx_get_ptype_map,
+	.report_link_speed = gve_mbx_report_link_speed,
 	.create_tx_queues = gve_mbx_create_tx_queues,
 	.destroy_tx_queues = gve_mbx_destroy_tx_queues,
 	.create_rx_queues = gve_mbx_create_rx_queues,
