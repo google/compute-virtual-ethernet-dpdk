@@ -1756,6 +1756,7 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 	priv->reg_bar0 = reg_bar;
 	priv->db_bar = db_bar;
 	priv->pci_dev = pci_dev;
+	priv->eth_dev = eth_dev;
 	priv->state_flags = 0x0;
 
 	pthread_mutexattr_init(&mutexattr);
@@ -1771,6 +1772,9 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 		pthread_mutex_destroy(&priv->nic_ts_lock);
 		return err;
 	}
+
+	if (gve_is_mailbox(priv))
+		eth_dev->data->dev_flags |= RTE_ETH_DEV_INTR_LSC;
 
 	if (gve_is_gqi(priv)) {
 		eth_dev->dev_ops = &gve_eth_dev_ops;

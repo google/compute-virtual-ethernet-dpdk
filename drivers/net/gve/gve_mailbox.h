@@ -136,6 +136,10 @@ enum gve_mbx_opcode {
 	GVE_MBX_DISABLE_RX_QUEUES		= 0x600f,
 };
 
+struct gve_mbx_event {
+	rte_le32_t event_mask;
+};
+
 #define GVE_MBX_NO_INTERRUPT 0xffff
 #define GVE_RAW_ADDRESSING_QPL_ID 0xFFFFFFFF
 

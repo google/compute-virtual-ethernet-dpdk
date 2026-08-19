@@ -650,6 +650,28 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 	return err;
 }
 
+static int
+gve_mbx_process_event(__rte_unused struct gve_mailbox *mbx,
+		      struct gve_mbx_desc *desc,
+		      struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_event *event;
+	uint32_t event_mask;
+	uint16_t buf_len;
+
+	buf_len = rte_le_to_cpu_16(desc->buf_len);
+	if (buf_len < sizeof(struct gve_mbx_event)) {
+		PMD_DRV_LOG(ERR, "Event message buffer length too short: %u", buf_len);
+		return -EBADMSG;
+	}
+
+	event = (struct gve_mbx_event *)recv_msg->va;
+	event_mask = rte_le_to_cpu_32(event->event_mask);
+
+	PMD_DRV_LOG(WARNING, "Unknown Mailbox event_mask: 0x%x", event_mask);
+	return 0;
+}
+
 static int gve_mbx_receive_msg(struct gve_mailbox *mbx)
 {
 	struct gve_priv *priv = mbx->priv;
@@ -684,6 +706,7 @@ static int gve_mbx_receive_msg(struct gve_mailbox *mbx)
 			err = -EBADMSG;
 			goto update_tail;
 		}
+		err = gve_mbx_process_event(mbx, recv_desc, recv_msg);
 		goto update_tail;
 	}
 

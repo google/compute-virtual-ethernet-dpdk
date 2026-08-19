@@ -353,6 +353,7 @@ struct gve_priv {
 	struct gve_registers __iomem *reg_bar0; /* see gve_register.h */
 	rte_be32_t __iomem *db_bar; /* "array" of doorbells */
 	struct rte_pci_device *pci_dev;
+	struct rte_eth_dev *eth_dev;
 
 	/* Admin queue - see gve_adminq.h*/
 	union gve_adminq_command *adminq;
