@@ -266,6 +266,9 @@ gve_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complete)
 	if (!dev->data->dev_started) {
 		link.link_status = RTE_ETH_LINK_DOWN;
 		link.link_speed = RTE_ETH_SPEED_NUM_NONE;
+	} else if (gve_is_mailbox(priv)) {
+		link.link_status = priv->link_status ? RTE_ETH_LINK_UP : RTE_ETH_LINK_DOWN;
+		link.link_speed = priv->link_speed;
 	} else {
 		PMD_DRV_LOG(DEBUG, "Get link status from hw");
 		err = priv->ctrl_ops->report_link_speed(priv);
@@ -274,11 +277,7 @@ gve_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complete)
 			priv->link_speed = RTE_ETH_SPEED_NUM_UNKNOWN;
 		}
 		link.link_speed = priv->link_speed;
-
-		if (gve_is_mailbox(priv))
-			link.link_status = priv->link_status ? RTE_ETH_LINK_UP : RTE_ETH_LINK_DOWN;
-		else
-			link.link_status = RTE_ETH_LINK_UP;
+		link.link_status = RTE_ETH_LINK_UP;
 	}
 
 	return rte_eth_linkstatus_set(dev, &link);
@@ -440,9 +439,13 @@ gve_dev_start(struct rte_eth_dev *dev)
 	}
 
 	dev->data->dev_started = 1;
-	gve_link_update(dev, 0);
-
 	priv = dev->data->dev_private;
+	if (gve_is_mailbox(priv)) {
+		ret = priv->ctrl_ops->report_link_speed(priv);
+		if (ret != 0)
+			PMD_DRV_LOG(WARNING, "Failed to get initial link speed: %d", ret);
+	}
+	gve_link_update(dev, 0);
 	/* No stats available yet for Dqo. */
 	if (gve_is_gqi(priv)) {
 		ret = gve_alloc_stats_report(priv,

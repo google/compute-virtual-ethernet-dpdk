@@ -4,6 +4,7 @@
 #include "base/gve_desc_dqo.h"
 #include <rte_alarm.h>
 #include <rte_malloc.h>
+#include <rte_thread.h>
 #include <rte_time.h>
 
 #include "gve_mailbox.h"
@@ -701,7 +702,15 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 }
 
 static int
-gve_mbx_process_event(__rte_unused struct gve_mailbox *mbx,
+gve_mbx_process_link_status_event(struct gve_mailbox *mbx)
+{
+	PMD_DRV_LOG(INFO, "GVE Mailbox Event: Link Status Change received");
+	mbx->link_status_change_pending = true;
+	return 0;
+}
+
+static int
+gve_mbx_process_event(struct gve_mailbox *mbx,
 		      struct gve_mbx_desc *desc,
 		      struct gve_dma_mem *recv_msg)
 {
@@ -717,6 +726,9 @@ gve_mbx_process_event(__rte_unused struct gve_mailbox *mbx,
 
 	event = (struct gve_mbx_event *)recv_msg->va;
 	event_mask = rte_le_to_cpu_32(event->event_mask);
+
+	if (event_mask & GVE_MBX_LINK_STATUS_CHANGE)
+		return gve_mbx_process_link_status_event(mbx);
 
 	PMD_DRV_LOG(WARNING, "Unknown Mailbox event_mask: 0x%x", event_mask);
 	return 0;
@@ -1041,12 +1053,80 @@ int gve_mbx_reset_flow_rules(struct gve_priv *priv)
 				     NULL);
 }
 
+static uint32_t
+gve_mbx_link_change_thread(void *arg)
+{
+	struct gve_mailbox *mbx = arg;
+	struct gve_priv *priv = mbx->priv;
+	int err;
+
+	rte_thread_detach(rte_thread_self());
+
+	if (!gve_get_control_plane_ok(priv))
+		goto out;
+
+	err = gve_mbx_report_link_speed(priv);
+	if (err != 0) {
+		PMD_DRV_LOG(ERR, "Failed to query link status over mailbox: %d", err);
+		goto out;
+	}
+
+	if (!gve_get_control_plane_ok(priv))
+		goto out;
+
+	PMD_DRV_LOG(INFO, "Link status updated over mailbox: status=%u, speed=%" PRIu64 " Mbps",
+		    priv->link_status, priv->link_speed);
+
+	if (priv->eth_dev != NULL)
+		rte_eth_dev_callback_process(priv->eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
+
+out:
+	rte_atomic_store_explicit(&mbx->link_thread_running, false,
+				  rte_memory_order_release);
+	return 0;
+}
+
+static void
+gve_mbx_start_link_thread(struct gve_mailbox *mbx)
+{
+	rte_thread_t tid;
+	int err;
+
+	if (rte_atomic_exchange_explicit(&mbx->link_thread_running, true,
+					 rte_memory_order_acq_rel)) {
+		PMD_DRV_LOG(DEBUG, "Link status thread is already running");
+		return;
+	}
+
+	err = rte_thread_create_internal_control(&tid, "gve-link",
+						 gve_mbx_link_change_thread, mbx);
+	if (err != 0) {
+		PMD_DRV_LOG(ERR, "Failed to create link status thread: %d", err);
+		rte_atomic_store_explicit(&mbx->link_thread_running, false,
+					  rte_memory_order_release);
+	}
+}
+
 static void gve_mbx_task(void *arg)
 {
 	struct gve_mailbox *mbx = arg;
+	uint32_t interval_us = 300000;
 
 	gve_mbx_rx_poll(mbx);
-	rte_eal_alarm_set(300000, gve_mbx_task, mbx);
+
+	if (mbx->link_status_change_pending) {
+		if (!rte_atomic_load_explicit(&mbx->link_thread_running,
+					     rte_memory_order_acquire)) {
+			mbx->link_status_change_pending = false;
+			gve_mbx_start_link_thread(mbx);
+		}
+	}
+
+	if (rte_atomic_load_explicit(&mbx->link_thread_running,
+				     rte_memory_order_acquire))
+		interval_us = 10000;
+
+	rte_eal_alarm_set(interval_us, gve_mbx_task, mbx);
 }
 
 static void gve_mbx_write_irq_db(struct gve_mailbox *mbx, u32 val)
@@ -1059,6 +1139,15 @@ static void gve_mbx_intr(void *arg)
 	struct gve_mailbox *mbx = arg;
 
 	gve_mbx_rx_poll(mbx);
+
+	if (mbx->link_status_change_pending) {
+		if (!rte_atomic_load_explicit(&mbx->link_thread_running,
+					     rte_memory_order_acquire)) {
+			mbx->link_status_change_pending = false;
+			gve_mbx_start_link_thread(mbx);
+		}
+	}
+
 	gve_mbx_write_irq_db(mbx, GVE_INTENA_DQO);
 	rte_intr_ack(mbx->priv->pci_dev->intr_handle);
 }
@@ -1138,6 +1227,12 @@ void gve_mbx_teardown(struct gve_priv *priv)
 		PMD_DRV_LOG(ERR, "Unknown mailbox mode %d", mbx->mode);
 	}
 
+	while (rte_atomic_load_explicit(&priv->mbx->link_thread_running,
+					rte_memory_order_acquire)) {
+		gve_mbx_rx_poll(priv->mbx);
+		rte_delay_us_sleep(1000);
+	}
+
 	err = gve_mbx_reset(priv);
 	if (err)
 		PMD_DRV_LOG(ERR, "Failed to reset in mailbox mode.");
@@ -1188,6 +1283,9 @@ int gve_mbx_init(struct gve_priv *priv)
 
 	mbx = priv->mbx;
 	mbx->priv = priv;
+	mbx->link_status_change_pending = false;
+	rte_atomic_store_explicit(&mbx->link_thread_running, false,
+				  rte_memory_order_relaxed);
 
 	/* Init the mailbox queues */
 	gve_mbx_reg_init(mbx->tx, priv->reg_bar0);

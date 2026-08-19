@@ -144,6 +144,10 @@ enum gve_mbx_opcode {
 	GVE_MBX_RESET_FLOW_RULES		= 0x6017,
 };
 
+enum gve_mbx_event_id {
+	GVE_MBX_LINK_STATUS_CHANGE		= (1 << 0),
+};
+
 struct gve_mbx_event {
 	rte_le32_t event_mask;
 };
@@ -342,6 +346,8 @@ struct gve_mailbox {
 	rte_be32_t __iomem *irq_db;
 
 	enum gve_mailbox_mode mode;
+	bool link_status_change_pending;
+	RTE_ATOMIC(bool) link_thread_running;
 };
 
 struct gve_mbx_desc {
