@@ -382,6 +382,7 @@ struct gve_priv {
 	uint32_t adminq_report_nic_timestamp_cnt;
 
 	struct gve_mailbox *mbx;
+	uint64_t negotiated_caps;
 
 	volatile uint32_t state_flags;
 

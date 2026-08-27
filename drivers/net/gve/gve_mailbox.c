@@ -425,7 +425,6 @@ gve_mbx_process_negotiate_caps_resp(struct gve_mailbox *mbx,
 	struct gve_mbx_negotiate_caps_resp *resp =
 		(struct gve_mbx_negotiate_caps_resp *)recv_msg->va;
 	struct gve_priv *priv = mbx->priv;
-	uint64_t negotiated_caps;
 	uint32_t irq_db_offset;
 	uint8_t bar_idx;
 
@@ -471,7 +470,7 @@ gve_mbx_process_negotiate_caps_resp(struct gve_mailbox *mbx,
 	priv->min_tx_desc_cnt = rte_le_to_cpu_16(resp->min_tx_ring_size);
 	priv->min_rx_desc_cnt = rte_le_to_cpu_16(resp->min_rx_ring_size);
 
-	negotiated_caps = rte_le_to_cpu_64(resp->negotiated_caps);
+	priv->negotiated_caps = rte_le_to_cpu_64(resp->negotiated_caps);
 
 	mbx->msg_queue->msg_timeout_ms = rte_le_to_cpu_16(resp->mbx_response_timeout_ms);
 	priv->num_ntfy_blks = rte_le_to_cpu_16(resp->num_msix_vectors);
@@ -490,7 +489,7 @@ gve_mbx_process_negotiate_caps_resp(struct gve_mailbox *mbx,
 		    "rx_ring_sizes(min/default/max)=%u/%u/%u, "
 		    "mbx_timeout_ms=%u, num_msix=%u, watchdog_timeout_ms=%u, "
 		    "max_pkt_buf_size=%u, max_hdr_buf_size=%u, hash_key_size=%u, hash_lut_size=%u",
-		    negotiated_caps, bar_idx, irq_db_offset,
+		    priv->negotiated_caps, bar_idx, irq_db_offset,
 		    priv->max_nb_txq, priv->max_nb_rxq,
 		    priv->default_tx_num_queues, priv->default_rx_num_queues, priv->max_mtu,
 		    priv->min_tx_desc_cnt, priv->default_tx_desc_cnt, priv->max_tx_desc_cnt,
