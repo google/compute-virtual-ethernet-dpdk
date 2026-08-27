@@ -32,6 +32,7 @@ enum gve_mbx_caps_msg_version {
 
 enum gve_mbx_caps {
 	GVE_MBX_CAP_DQO_RDA		= BIT(0),
+	GVE_MBX_CAP_FLOW_STEERING	= BIT(3),
 };
 
 #define GVE_OS_TYPE_DPDK		5
@@ -126,6 +127,7 @@ static inline int gve_mbx_get_err_from_status(int mbx_status) {
 enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES		= 0x6001,
 	GVE_MBX_EVENT				= 0x6002,
+	GVE_MBX_GET_INFO_FLOW_STEERING		= 0x6003,
 	GVE_MBX_GET_INTERRUPT_DBS		= 0x6005,
 	GVE_MBX_GET_PTYPE_MAP			= 0x6006,
 	GVE_MBX_REPORT_LINK_STATUS		= 0x6007,
@@ -292,6 +294,10 @@ struct gve_mbx_negotiate_caps_resp {
 	rte_le16_t max_header_buffer_size;
 	rte_le16_t hash_key_size;
 	rte_le16_t hash_lut_size;
+};
+
+struct gve_mbx_get_info_flow_steering_resp {
+	rte_le32_t max_flow_rules;
 };
 
 struct gve_mbx_completion {

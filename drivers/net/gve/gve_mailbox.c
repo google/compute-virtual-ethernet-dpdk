@@ -504,6 +504,15 @@ gve_mbx_process_negotiate_caps_resp(struct gve_mailbox *mbx,
 	return 0;
 }
 
+static void gve_mbx_process_info_flow_steering(struct gve_mailbox *mbx,
+					       struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_get_info_flow_steering_resp *resp =
+		(struct gve_mbx_get_info_flow_steering_resp *)recv_msg->va;
+
+	mbx->priv->max_flow_rules = rte_le_to_cpu_32(resp->max_flow_rules);
+}
+
 static int
 gve_mbx_process_get_interrupt_dbs_resp(struct gve_mailbox *mbx,
 					struct gve_dma_mem *recv_msg)
@@ -657,6 +666,9 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 	switch (opcode) {
 	case GVE_MBX_NEGOTIATE_CAPABILITIES:
 		return gve_mbx_process_negotiate_caps_resp(mbx, recv_msg);
+	case GVE_MBX_GET_INFO_FLOW_STEERING:
+		gve_mbx_process_info_flow_steering(mbx, recv_msg);
+		break;
 	case GVE_MBX_GET_INTERRUPT_DBS:
 		return gve_mbx_process_get_interrupt_dbs_resp(mbx, recv_msg);
 	case GVE_MBX_GET_PTYPE_MAP:
@@ -1108,6 +1120,28 @@ int gve_mbx_init(struct gve_priv *priv)
 	return 0;
 }
 
+static int gve_mbx_get_info_flow_steering(struct gve_priv *priv)
+{
+	int err;
+
+	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_GET_INFO_FLOW_STEERING,
+				    0, NULL);
+	if (err)
+		PMD_DRV_LOG(ERR, "Failed to get flow steering info: %d", err);
+
+	return err;
+}
+
+static int gve_mbx_process_capabilities(struct gve_priv *priv)
+{
+	int err = 0;
+
+	if (priv->negotiated_caps & GVE_MBX_CAP_FLOW_STEERING)
+		err = gve_mbx_get_info_flow_steering(priv);
+
+	return err;
+}
+
 int
 gve_mbx_get_device_properties(struct gve_priv *priv)
 {
@@ -1117,7 +1151,8 @@ gve_mbx_get_device_properties(struct gve_priv *priv)
 	memset(&req, 0, sizeof(req));
 	req.msg_version = rte_cpu_to_le_32(GVE_MBX_CAPS_MSG_V1);
 	req.msg_size = rte_cpu_to_le_32(sizeof(req));
-	req.supported_caps = rte_cpu_to_le_64(GVE_MBX_CAP_DQO_RDA);
+	req.supported_caps = rte_cpu_to_le_64(GVE_MBX_CAP_DQO_RDA |
+					      GVE_MBX_CAP_FLOW_STEERING);
 	req.os_type = GVE_OS_TYPE_DPDK;
 	req.driver_major = GVE_VERSION_MAJOR;
 	req.driver_minor = GVE_VERSION_MINOR;
@@ -1131,8 +1166,14 @@ gve_mbx_get_device_properties(struct gve_priv *priv)
 
 	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_NEGOTIATE_CAPABILITIES,
 				    sizeof(req), (uint8_t *)&req);
-	if (err)
+	if (err) {
 		PMD_DRV_LOG(ERR, "Failed to negotiate capabilities over mailbox: %d", err);
+		return err;
+	}
+
+	err = gve_mbx_process_capabilities(priv);
+	if (err)
+		PMD_DRV_LOG(ERR, "Failed to process negotiated capabilities: %d", err);
 
 	return err;
 }
