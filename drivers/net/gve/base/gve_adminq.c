@@ -997,7 +997,7 @@ static void gve_enable_supported_features(struct gve_priv *priv,
 	if (dev_op_nic_timestamp &&
 	    (supported_features_mask & GVE_SUP_NIC_TIMESTAMP_MASK)) {
 		PMD_DRV_LOG(INFO, "NIC TIMESTAMP device option enabled.");
-		priv->nic_timestamp_supported = true;
+		priv->clk_read_type = GVE_DEV_CLK_CMD;
 	}
 }
 
