@@ -22,6 +22,9 @@
 #define GVE_MBX_TX_ENABLE_M		BIT(31)
 #define GVE_MBX_TX_HEAD_M		RTE_GENMASK32(9, 0)
 
+#define GVE_CMD_SYNC_TRIGGER		0x3
+#define GVE_CMD_SYNC_SHTIME_EN		BIT(2)
+
 #define GVE_MBX_DEFAULT_RING_SIZE	64
 /* Length of msg queue < mbx queue to allow for async messages from device */
 #define GVE_MBX_MSG_QUEUE_LEN		48
@@ -33,6 +36,7 @@ enum gve_mbx_caps_msg_version {
 enum gve_mbx_caps {
 	GVE_MBX_CAP_DQO_RDA		= BIT(0),
 	GVE_MBX_CAP_FLOW_STEERING	= BIT(3),
+	GVE_MBX_CAP_NIC_TSTAMP_REG	= BIT(4),
 };
 
 #define GVE_OS_TYPE_DPDK		5
@@ -128,6 +132,7 @@ enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES		= 0x6001,
 	GVE_MBX_EVENT				= 0x6002,
 	GVE_MBX_GET_INFO_FLOW_STEERING		= 0x6003,
+	GVE_MBX_GET_INFO_NIC_TSTAMP_REG		= 0x6004,
 	GVE_MBX_GET_INTERRUPT_DBS		= 0x6005,
 	GVE_MBX_GET_PTYPE_MAP			= 0x6006,
 	GVE_MBX_REPORT_LINK_STATUS		= 0x6007,
@@ -142,6 +147,17 @@ enum gve_mbx_opcode {
 	GVE_MBX_ADD_FLOW_RULE			= 0x6015,
 	GVE_MBX_DEL_FLOW_RULE			= 0x6016,
 	GVE_MBX_RESET_FLOW_RULES		= 0x6017,
+};
+
+struct gve_mbx_get_info_nic_tstamp_reg_resp {
+	rte_le64_t dev_clk_ns_l_offset;
+	rte_le64_t dev_clk_ns_h_offset;
+	rte_le64_t sys_clk_ns_l_offset;
+	rte_le64_t sys_clk_ns_h_offset;
+	rte_le64_t cmd_sync_trigger_offset;
+	uint8_t bar;
+	uint8_t clk_type;
+	uint8_t pad[6];
 };
 
 enum gve_mbx_event_id {
@@ -420,6 +436,7 @@ int gve_mbx_get_device_properties(struct gve_priv *priv);
 int gve_mbx_get_interrupt_dbs(struct gve_priv *priv);
 int gve_mbx_get_ptype_map(struct gve_priv *priv);
 int gve_mbx_report_link_speed(struct gve_priv *priv);
+int gve_mbx_get_info_nic_tstamp_reg(struct gve_priv *priv);
 int gve_mbx_create_tx_queues(struct gve_priv *priv, uint32_t num_queues);
 int gve_mbx_destroy_tx_queues(struct gve_priv *priv, uint32_t num_queues);
 int gve_mbx_create_rx_queues(struct gve_priv *priv, uint32_t num_queues);

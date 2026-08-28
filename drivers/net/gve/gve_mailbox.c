@@ -619,6 +619,41 @@ gve_mbx_process_config_rx_queues_resp(struct gve_mailbox *mbx,
 }
 
 static int
+gve_mbx_process_get_info_nic_tstamp_reg_resp(struct gve_mailbox *mbx,
+					     struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_get_info_nic_tstamp_reg_resp *resp =
+		(struct gve_mbx_get_info_nic_tstamp_reg_resp *)recv_msg->va;
+	struct gve_priv *priv = mbx->priv;
+	uint64_t dev_clk_ns_l_offset;
+	uint64_t dev_clk_ns_h_offset;
+	uint64_t cmd_sync_trigger_offset;
+
+	if (resp->bar != 0) {
+		PMD_DRV_LOG(ERR, "Unsupported BAR %u for NIC timestamp register", resp->bar);
+		return -EINVAL;
+	}
+
+	dev_clk_ns_l_offset = rte_le_to_cpu_64(resp->dev_clk_ns_l_offset);
+	dev_clk_ns_h_offset = rte_le_to_cpu_64(resp->dev_clk_ns_h_offset);
+	cmd_sync_trigger_offset = rte_le_to_cpu_64(resp->cmd_sync_trigger_offset);
+
+	priv->dev_clk_ns_l = (volatile uint32_t *)((uint8_t *)priv->reg_bar0 + dev_clk_ns_l_offset);
+	priv->dev_clk_ns_h = (volatile uint32_t *)((uint8_t *)priv->reg_bar0 + dev_clk_ns_h_offset);
+	priv->dev_clk_cmd_sync =
+		(volatile uint32_t *)((uint8_t *)priv->reg_bar0 + cmd_sync_trigger_offset);
+	priv->clk_read_type = GVE_DEV_CLK_MMIO;
+
+	PMD_DRV_LOG(INFO,
+		    "NIC timestamp register mapped: bar=%u, dev_clk_l=0x%" PRIx64
+		    ", dev_clk_h=0x%" PRIx64 ", cmd_sync=0x%" PRIx64,
+		    resp->bar, dev_clk_ns_l_offset, dev_clk_ns_h_offset,
+		    cmd_sync_trigger_offset);
+
+	return 0;
+}
+
+static int
 gve_mbx_process_report_link_status_resp(struct gve_mailbox *mbx,
 					struct gve_dma_mem *recv_msg)
 {
@@ -671,6 +706,8 @@ static int gve_mbx_process_msg(struct  gve_mailbox *mbx, uint32_t opcode,
 	case GVE_MBX_GET_INFO_FLOW_STEERING:
 		gve_mbx_process_info_flow_steering(mbx, recv_msg);
 		break;
+	case GVE_MBX_GET_INFO_NIC_TSTAMP_REG:
+		return gve_mbx_process_get_info_nic_tstamp_reg_resp(mbx, recv_msg);
 	case GVE_MBX_GET_INTERRUPT_DBS:
 		return gve_mbx_process_get_interrupt_dbs_resp(mbx, recv_msg);
 	case GVE_MBX_GET_PTYPE_MAP:
@@ -1333,7 +1370,8 @@ gve_mbx_get_device_properties(struct gve_priv *priv)
 	req.msg_version = rte_cpu_to_le_32(GVE_MBX_CAPS_MSG_V1);
 	req.msg_size = rte_cpu_to_le_32(sizeof(req));
 	req.supported_caps = rte_cpu_to_le_64(GVE_MBX_CAP_DQO_RDA |
-					      GVE_MBX_CAP_FLOW_STEERING);
+					      GVE_MBX_CAP_FLOW_STEERING |
+					      GVE_MBX_CAP_NIC_TSTAMP_REG);
 	req.os_type = GVE_OS_TYPE_DPDK;
 	req.driver_major = GVE_VERSION_MAJOR;
 	req.driver_minor = GVE_VERSION_MINOR;
@@ -1362,6 +1400,18 @@ gve_mbx_get_device_properties(struct gve_priv *priv)
 	/* Ignore errors if initial negotiate_caps message succeeds. All other
 	 * functionalities/capabilities are optional. */
 	return 0;
+}
+
+int
+gve_mbx_get_info_nic_tstamp_reg(struct gve_priv *priv)
+{
+	int err;
+
+	err = gve_mbx_send_msg_wait(priv->mbx, GVE_MBX_GET_INFO_NIC_TSTAMP_REG, 0, NULL);
+	if (err)
+		PMD_DRV_LOG(ERR, "Failed to get NIC timestamp register info over mailbox: %d", err);
+
+	return err;
 }
 
 int

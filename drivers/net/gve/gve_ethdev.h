@@ -278,6 +278,7 @@ struct gve_flow_rule_params;
 enum gve_dev_clk_type {
 	GVE_DEV_CLK_UNSUPPORTED = 0,
 	GVE_DEV_CLK_CMD,
+	GVE_DEV_CLK_MMIO,
 };
 
 struct gve_ctrl_ops {
@@ -297,6 +298,7 @@ struct gve_ctrl_ops {
 	int (*deconfigure_device_resources)(struct gve_priv *priv);
 	int (*report_link_status)(struct gve_priv *priv);
 	int (*report_link_speed)(struct gve_priv *priv);
+	int (*get_info_nic_tstamp_reg)(struct gve_priv *priv);
 	int (*query_rss)(struct gve_priv *priv);
 	int (*configure_rss)(struct gve_priv *priv, struct gve_rss_config *rss_conf);
 	int (*add_flow_rule)(struct gve_priv *priv, struct gve_flow_rule_params *rule, uint32_t loc);
@@ -421,6 +423,10 @@ struct gve_priv {
 
 	/* HW Timestamping Fields */
 	enum gve_dev_clk_type clk_read_type;
+	volatile uint32_t *dev_clk_ns_l;
+	volatile uint32_t *dev_clk_ns_h;
+	volatile uint32_t *dev_clk_cmd_sync;
+	rte_spinlock_t clk_lock;
 	const struct rte_memzone *nic_ts_report_mz;
 	struct gve_nic_ts_report *nic_ts_report;
 	pthread_mutex_t nic_ts_lock;

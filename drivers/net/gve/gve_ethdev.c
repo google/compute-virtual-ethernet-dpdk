@@ -470,6 +470,20 @@ gve_dev_start(struct rte_eth_dev *dev)
 	return 0;
 }
 
+static inline uint64_t
+gve_mmio_clock_read(struct gve_priv *priv)
+{
+	uint32_t dev_high, dev_low;
+
+	rte_spinlock_lock(&priv->clk_lock);
+	rte_write32(GVE_CMD_SYNC_SHTIME_EN | GVE_CMD_SYNC_TRIGGER, priv->dev_clk_cmd_sync);
+	dev_high = rte_read32(priv->dev_clk_ns_h);
+	dev_low = rte_read32(priv->dev_clk_ns_l);
+	rte_spinlock_unlock(&priv->clk_lock);
+
+	return ((uint64_t)dev_high << 32) | dev_low;
+}
+
 static void
 gve_read_nic_clock(void *arg)
 {
@@ -478,16 +492,11 @@ gve_read_nic_clock(void *arg)
 	uint64_t ts;
 	int err;
 
-	if (!priv || !priv->nic_ts_report_mz)
+	if (!priv || priv->clk_read_type == GVE_DEV_CLK_UNSUPPORTED)
 		return;
 
-	pthread_mutex_lock(&priv->nic_ts_lock);
-	memset(priv->nic_ts_report, 0, sizeof(struct gve_nic_ts_report));
-
-	err = priv->ctrl_ops->report_nic_timestamp(priv, priv->nic_ts_report_mz->iova);
-	if (err == 0) {
-		ts = be64_to_cpu(priv->nic_ts_report->nic_timestamp);
-		pthread_mutex_unlock(&priv->nic_ts_lock);
+	if (priv->clk_read_type == GVE_DEV_CLK_MMIO) {
+		ts = gve_mmio_clock_read(priv);
 		rte_atomic_store_explicit(&priv->last_read_nic_timestamp, ts,
 					  rte_memory_order_relaxed);
 		PMD_DRV_LOG(DEBUG, "Fetched NIC Timestamp: %" PRIu64, ts);
@@ -495,19 +504,39 @@ gve_read_nic_clock(void *arg)
 					  rte_memory_order_relaxed);
 		rte_atomic_store_explicit(&priv->nic_ts_stale, 0,
 					  rte_memory_order_release);
-	} else {
-		pthread_mutex_unlock(&priv->nic_ts_lock);
-		PMD_DRV_LOG(ERR, "Failed to read NIC clock, AQ err: %d", err);
-		fails = rte_atomic_fetch_add_explicit(&priv->nic_ts_read_fails, 1,
-						      rte_memory_order_relaxed) + 1;
-		if (fails >= GVE_NIC_CLOCK_READ_MAX_FAILS) {
-			if (!rte_atomic_load_explicit(&priv->nic_ts_stale,
-						      rte_memory_order_relaxed))
-				PMD_DRV_LOG(ERR,
-					"NIC timestamping marked as stale after %u consecutive failures",
-					GVE_NIC_CLOCK_READ_MAX_FAILS);
-			rte_atomic_store_explicit(&priv->nic_ts_stale, 1,
-						  rte_memory_order_release);
+	} else if (priv->clk_read_type == GVE_DEV_CLK_CMD) {
+		if (!priv->nic_ts_report_mz)
+			return;
+
+		pthread_mutex_lock(&priv->nic_ts_lock);
+		memset(priv->nic_ts_report, 0, sizeof(struct gve_nic_ts_report));
+
+		err = priv->ctrl_ops->report_nic_timestamp(priv,
+							   priv->nic_ts_report_mz->iova);
+		if (err == 0) {
+			ts = be64_to_cpu(priv->nic_ts_report->nic_timestamp);
+			pthread_mutex_unlock(&priv->nic_ts_lock);
+			rte_atomic_store_explicit(&priv->last_read_nic_timestamp, ts,
+						rte_memory_order_relaxed);
+			PMD_DRV_LOG(DEBUG, "Fetched NIC Timestamp: %" PRIu64, ts);
+			rte_atomic_store_explicit(&priv->nic_ts_read_fails, 0,
+						rte_memory_order_relaxed);
+			rte_atomic_store_explicit(&priv->nic_ts_stale, 0,
+						rte_memory_order_release);
+		} else {
+			pthread_mutex_unlock(&priv->nic_ts_lock);
+			PMD_DRV_LOG(ERR, "Failed to read NIC clock, AQ err: %d", err);
+			fails = rte_atomic_fetch_add_explicit(&priv->nic_ts_read_fails, 1,
+							rte_memory_order_relaxed) + 1;
+			if (fails >= GVE_NIC_CLOCK_READ_MAX_FAILS) {
+				if (!rte_atomic_load_explicit(&priv->nic_ts_stale,
+							rte_memory_order_relaxed))
+					PMD_DRV_LOG(ERR,
+						"NIC timestamping marked as stale after %u consecutive failures",
+						GVE_NIC_CLOCK_READ_MAX_FAILS);
+				rte_atomic_store_explicit(&priv->nic_ts_stale, 1,
+							rte_memory_order_release);
+			}
 		}
 	}
 }
@@ -562,6 +591,18 @@ gve_free_nic_ts_report(struct gve_priv *priv)
 		priv->nic_ts_report_mz = NULL;
 		priv->nic_ts_report = NULL;
 	}
+}
+
+static void
+gve_teardown_nic_timestamp(struct gve_priv *priv)
+{
+	if (priv->clk_read_type == GVE_DEV_CLK_UNSUPPORTED)
+		return;
+
+	rte_atomic_store_explicit(&priv->nic_ts_thread_should_stop, 1,
+				  rte_memory_order_relaxed);
+	rte_thread_join(priv->nic_ts_thread_id, NULL);
+	gve_free_nic_ts_report(priv);
 }
 
 static int
@@ -700,13 +741,7 @@ gve_teardown_device_resources(struct gve_priv *priv)
 		}
 	}
 
-	if (priv->nic_ts_report_mz) {
-		rte_atomic_store_explicit(&priv->nic_ts_thread_should_stop, 1,
-					  rte_memory_order_relaxed);
-		rte_thread_join(priv->nic_ts_thread_id, NULL);
-		gve_free_nic_ts_report(priv);
-	}
-
+	gve_teardown_nic_timestamp(priv);
 	gve_free_ptype_lut_dqo(priv);
 	gve_free_counter_array(priv);
 	gve_free_irq_db(priv);
@@ -1351,22 +1386,26 @@ static int
 gve_read_clock(struct rte_eth_dev *dev, uint64_t *clock)
 {
 	struct gve_priv *priv = dev->data->dev_private;
-	uint64_t ts;
+	uint64_t ts = 0;
 	int err;
 
 	if (priv->clk_read_type == GVE_DEV_CLK_UNSUPPORTED)
 		return -EOPNOTSUPP;
+	else if (priv->clk_read_type == GVE_DEV_CLK_CMD) {
+		if (!priv->nic_ts_report_mz)
+			return -EIO;
 
-	if (!priv->nic_ts_report_mz)
-		return -EIO;
+		pthread_mutex_lock(&priv->nic_ts_lock);
+		err = priv->ctrl_ops->report_nic_timestamp(priv, priv->nic_ts_report_mz->iova);
+		if (err != 0)
+			return err;
 
-	pthread_mutex_lock(&priv->nic_ts_lock);
-	err = priv->ctrl_ops->report_nic_timestamp(priv, priv->nic_ts_report_mz->iova);
-	if (err != 0)
-		return err;
+		ts = be64_to_cpu(priv->nic_ts_report->nic_timestamp);
+		pthread_mutex_unlock(&priv->nic_ts_lock);
+	} else if (priv->clk_read_type == GVE_DEV_CLK_MMIO) {
+		ts = gve_mmio_clock_read(priv);
+	}
 
-	ts = be64_to_cpu(priv->nic_ts_report->nic_timestamp);
-	pthread_mutex_unlock(&priv->nic_ts_lock);
 	*clock = ts;
 
 	/* Update the cached value */
@@ -1450,26 +1489,29 @@ pci_dev_msix_vec_count(struct rte_pci_device *pdev)
 static void
 gve_setup_nic_timestamp(struct gve_priv *priv)
 {
-	int err;
+	int err = 0;
 
 	if (priv->clk_read_type == GVE_DEV_CLK_UNSUPPORTED)
 		return;
 
 	rte_atomic_store_explicit(&priv->nic_ts_read_fails, 0, rte_memory_order_relaxed);
 	rte_atomic_store_explicit(&priv->nic_ts_stale, 1, rte_memory_order_relaxed);
-	err = gve_alloc_nic_ts_report(priv);
-	if (err == 0) {
-		gve_read_nic_clock(priv);
-		rte_atomic_store_explicit(&priv->nic_ts_thread_should_stop, 0,
-					  rte_memory_order_relaxed);
-		err = rte_thread_create_internal_control(&priv->nic_ts_thread_id, "gve-ts",
-							 gve_nic_ts_thread, priv);
-		if (err != 0) {
-			PMD_DRV_LOG(ERR, "Failed to create NIC clock sync thread, err=%d", err);
-			gve_free_nic_ts_report(priv);
+	if (priv->clk_read_type == GVE_DEV_CLK_CMD) {
+		err = gve_alloc_nic_ts_report(priv);
+		if (err) {
+			PMD_DRV_LOG(ERR,
+				    "Failed to allocate memory for NIC timestamping subsystem. Please reset device to retry.");
+			return;
 		}
-	} else {
-		PMD_DRV_LOG(ERR, "Failed to allocate memory for NIC timestamping subsystem. Please reset device to retry.");
+	}
+	gve_read_nic_clock(priv);
+	rte_atomic_store_explicit(&priv->nic_ts_thread_should_stop, 0,
+				  rte_memory_order_relaxed);
+	err = rte_thread_create_internal_control(&priv->nic_ts_thread_id, "gve-ts",
+						 gve_nic_ts_thread, priv);
+	if (err != 0) {
+		PMD_DRV_LOG(ERR, "Failed to create NIC clock sync thread, err=%d", err);
+		gve_free_nic_ts_report(priv);
 	}
 }
 
@@ -1520,6 +1562,12 @@ gve_setup_device_resources(struct gve_priv *priv)
 		if (unlikely(err)) {
 			PMD_DRV_LOG(ERR, "Could not get interrupt doorbells: err=%d", err);
 			return err;
+		}
+		if (priv->negotiated_caps & GVE_MBX_CAP_NIC_TSTAMP_REG) {
+			err = priv->ctrl_ops->get_info_nic_tstamp_reg(priv);
+			if (unlikely(err))
+				PMD_DRV_LOG(WARNING,
+					"Failed to get NIC timestamp register info: err=%d", err);
 		}
 	}
 	if (!gve_is_gqi(priv)) {
@@ -1665,6 +1713,7 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.get_interrupt_dbs = gve_mbx_get_interrupt_dbs,
 	.get_ptype_map = gve_mbx_get_ptype_map,
 	.report_link_speed = gve_mbx_report_link_speed,
+	.get_info_nic_tstamp_reg = gve_mbx_get_info_nic_tstamp_reg,
 	.create_tx_queues = gve_mbx_create_tx_queues,
 	.destroy_tx_queues = gve_mbx_destroy_tx_queues,
 	.create_rx_queues = gve_mbx_create_rx_queues,
@@ -1811,6 +1860,7 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 	pthread_mutex_init(&priv->flow_rule_lock, &mutexattr);
 	pthread_mutex_init(&priv->nic_ts_lock, &mutexattr);
 	pthread_mutexattr_destroy(&mutexattr);
+	rte_spinlock_init(&priv->clk_lock);
 
 	priv->mbuf_timestamp_offset = -1;
 	err = gve_init_priv(priv, false);
