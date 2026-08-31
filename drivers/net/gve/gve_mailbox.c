@@ -923,9 +923,9 @@ static int gve_mbx_send_msg(struct gve_mailbox *mbx, uint32_t opcode,
 	return 0;
 }
 
-static bool gve_mbx_in_reset(struct gve_mailbox *mbx)
+bool gve_mbx_in_reset(struct gve_mailbox *mbx)
 {
-	if (!mbx->rx)
+	if (!mbx || !mbx->rx)
 		return true;
 
 	return !(rte_read32(&mbx->rx->reg->queue_len) & GVE_MBX_RX_LEN_M);

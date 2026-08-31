@@ -946,7 +946,6 @@ gve_dev_close(struct rte_eth_dev *dev)
 	return err;
 }
 
-
 static int
 gve_verify_driver_compatibility(struct gve_priv *priv)
 {
@@ -1778,6 +1777,17 @@ gve_internal_recover_device(struct rte_eth_dev *dev)
 		goto recover_fail;
 	}
 
+	/* Renegotiate capabilities after fresh mailbox init */
+	if (gve_is_mailbox(priv)) {
+		ret = priv->ctrl_ops->get_device_properties(priv);
+		if (ret != 0) {
+			PMD_DRV_LOG(ERR,
+				"Port %u: Failed to renegotiate device properties",
+				port_id);
+			goto recover_fail;
+		}
+	}
+
 	ret = gve_configure_device_resources(priv);
 	if (ret != 0)
 		goto recover_fail;
@@ -1822,8 +1832,7 @@ recover_fail:
 	rte_eth_fp_ops[port_id].rx_pkt_burst = rte_eth_pkt_burst_dummy;
 	rte_eth_fp_ops[port_id].tx_pkt_burst = rte_eth_pkt_burst_dummy;
 
-	PMD_DRV_LOG(ERR, "Port %u: Proactive reset recovery failed",
-		port_id);
+	PMD_DRV_LOG(ERR, "Port %u: Proactive reset recovery failed", port_id);
 	rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_RECOVERY_FAILED, NULL);
 
 	pthread_mutex_unlock(&priv->reset_lock);
@@ -1858,8 +1867,9 @@ gve_check_device_status(void *arg)
 		ret = rte_eal_alarm_set(GVE_DEV_POLL_INTERVAL_US,
 					gve_check_device_status, dev);
 		if (ret != 0)
-			PMD_DRV_LOG(ERR, "Port %u: Failed to re-arm alarm poller!",
-				dev->data->port_id);
+			PMD_DRV_LOG(ERR,
+				    "Port %u: Failed to re-arm alarm poller!",
+				    dev->data->port_id);
 	}
 }
 
@@ -2016,9 +2026,16 @@ static const struct gve_ctrl_ops gve_adminq_ops = {
 	.unregister_page_list = gve_adminq_unregister_page_list,
 };
 
+static bool
+gve_mbx_check_device_needs_reset(struct gve_priv *priv)
+{
+	return gve_mbx_in_reset(priv->mbx);
+}
+
 static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.init_ctrl_plane = gve_mbx_init,
 	.free_ctrl_plane = gve_mbx_teardown,
+	.check_device_needs_reset = gve_mbx_check_device_needs_reset,
 	.get_device_properties = gve_mbx_get_device_properties,
 	.configure_device_resources = gve_mbx_get_interrupt_dbs,
 	.get_ptype_map = gve_mbx_get_ptype_map,
