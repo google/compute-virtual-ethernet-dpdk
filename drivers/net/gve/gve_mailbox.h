@@ -330,6 +330,7 @@ struct gve_mbx_msg_queue {
 enum gve_mailbox_mode {
 	GVE_MBX_MODE_NONE,
 	GVE_MBX_MODE_POLL,
+	GVE_MBX_MODE_INTR,
 };
 
 struct gve_mailbox {

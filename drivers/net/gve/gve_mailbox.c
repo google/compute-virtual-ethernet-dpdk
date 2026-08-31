@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  * Copyright (c) 2026 Google LLC
  */
+#include "base/gve_desc_dqo.h"
 #include <rte_alarm.h>
 #include <rte_malloc.h>
 #include <rte_time.h>
@@ -1048,6 +1049,75 @@ static void gve_mbx_task(void *arg)
 	rte_eal_alarm_set(300000, gve_mbx_task, mbx);
 }
 
+static void gve_mbx_write_irq_db(struct gve_mailbox *mbx, u32 val)
+{
+       rte_write32(val | GVE_ITR_NO_UPDATE_DQO, mbx->irq_db);
+}
+
+static void gve_mbx_intr(void *arg)
+{
+	struct gve_mailbox *mbx = arg;
+
+	gve_mbx_rx_poll(mbx);
+	gve_mbx_write_irq_db(mbx, GVE_INTENA_DQO);
+	rte_intr_ack(mbx->priv->pci_dev->intr_handle);
+}
+
+static void gve_mbx_disable_interrupt(struct gve_mailbox *mbx,
+				     bool enable_polling)
+{
+	struct rte_intr_handle *intr_handle;
+	struct gve_priv *priv = mbx->priv;
+
+	intr_handle = priv->pci_dev->intr_handle;
+
+	rte_intr_callback_unregister(intr_handle, gve_mbx_intr, mbx);
+	rte_intr_disable(intr_handle);
+
+	mbx->mode = GVE_MBX_MODE_NONE;
+
+	if (enable_polling) {
+		rte_eal_alarm_set(300000, gve_mbx_task, mbx);
+		mbx->mode = GVE_MBX_MODE_POLL;
+	}
+
+}
+
+static int gve_mbx_enable_interrupt(struct gve_mailbox *mbx)
+{
+	struct rte_intr_handle *intr_handle;
+	struct gve_priv *priv = mbx->priv;
+	int err;
+
+	intr_handle = priv->pci_dev->intr_handle;
+
+	err = rte_intr_callback_register(intr_handle, gve_mbx_intr, priv->mbx);
+	if (err) {
+		PMD_DRV_LOG(ERR, "Failed to register mailbox interrupt callback: %d",
+			err);
+		return err;
+	}
+
+	/* Disable mailbox polling. */
+	/* TODO: create helper for disabling/enabling polling, with proper error handling. */
+	rte_eal_alarm_cancel(gve_mbx_task, mbx);
+	mbx->mode = GVE_MBX_MODE_NONE;
+
+	err = rte_intr_enable(intr_handle);
+	if (err) {
+		goto enable_polling;
+	}
+
+	gve_mbx_write_irq_db(mbx, GVE_INTENA_DQO);
+	mbx->mode = GVE_MBX_MODE_INTR;
+	return 0;
+
+
+enable_polling:
+	gve_mbx_disable_interrupt(mbx, true);
+	return err;
+}
+
 void gve_mbx_teardown(struct gve_priv *priv)
 {
 	struct gve_mailbox *mbx = priv->mbx;
@@ -1060,6 +1130,9 @@ void gve_mbx_teardown(struct gve_priv *priv)
 	switch (mbx->mode) {
 	case GVE_MBX_MODE_POLL:
 		rte_eal_alarm_cancel(gve_mbx_task, priv->mbx);
+		break;
+	case GVE_MBX_MODE_INTR:
+		gve_mbx_disable_interrupt(priv->mbx, false);
 		break;
 	default:
 		PMD_DRV_LOG(ERR, "Unknown mailbox mode %d", mbx->mode);
@@ -1185,7 +1258,12 @@ gve_mbx_get_device_properties(struct gve_priv *priv)
 	if (err)
 		PMD_DRV_LOG(ERR, "Failed to process negotiated capabilities: %d", err);
 
-	return err;
+
+	gve_mbx_enable_interrupt(priv->mbx);
+
+	/* Ignore errors if initial negotiate_caps message succeeds. All other
+	 * functionalities/capabilities are optional. */
+	return 0;
 }
 
 int

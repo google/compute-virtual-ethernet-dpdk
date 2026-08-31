@@ -254,6 +254,7 @@ GVE_CHECK_STRUCT_LEN(32, gve_rx_compl_desc_dqo);
 
 /* GVE IRQ */
 #define GVE_NO_INT_MODE_DQO BIT(30)
+#define GVE_INTENA_DQO BIT(0)
 #define GVE_ITR_NO_UPDATE_DQO (3 << 3)
 
 #endif /* _GVE_DESC_DQO_H_ */
