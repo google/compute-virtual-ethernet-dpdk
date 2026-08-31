@@ -1050,11 +1050,20 @@ static void gve_mbx_task(void *arg)
 
 void gve_mbx_teardown(struct gve_priv *priv)
 {
+	struct gve_mailbox *mbx = priv->mbx;
 	int err;
 
 	gve_clear_control_plane_ok(priv);
+	if (!mbx)
+		return;
 
-	rte_eal_alarm_cancel(gve_mbx_task, priv->mbx);
+	switch (mbx->mode) {
+	case GVE_MBX_MODE_POLL:
+		rte_eal_alarm_cancel(gve_mbx_task, priv->mbx);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Unknown mailbox mode %d", mbx->mode);
+	}
 
 	err = gve_mbx_reset(priv);
 	if (err)
@@ -1114,6 +1123,7 @@ int gve_mbx_init(struct gve_priv *priv)
 	gve_mbx_post_rx_bufs(mbx);
 
 	rte_eal_alarm_set(300000, gve_mbx_task, mbx);
+	mbx->mode = GVE_MBX_MODE_POLL;
 
 	gve_set_control_plane_ok(priv);
 

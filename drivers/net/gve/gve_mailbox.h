@@ -326,6 +326,12 @@ struct gve_mbx_msg_queue {
 	rte_spinlock_t mbx_msg_q_lock;
 };
 
+
+enum gve_mailbox_mode {
+	GVE_MBX_MODE_NONE,
+	GVE_MBX_MODE_POLL,
+};
+
 struct gve_mailbox {
 	struct gve_mbx_queue *tx;
 	struct gve_mbx_queue *rx;
@@ -333,6 +339,8 @@ struct gve_mailbox {
 	struct gve_priv *priv;
 	rte_thread_t mbx_thread;
 	rte_be32_t __iomem *irq_db;
+
+	enum gve_mailbox_mode mode;
 };
 
 struct gve_mbx_desc {
