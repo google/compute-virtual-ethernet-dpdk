@@ -1778,6 +1778,17 @@ gve_internal_recover_device(struct rte_eth_dev *dev)
 		goto recover_fail;
 	}
 
+	/* Renegotiate capabilities after fresh mailbox init */
+	if (gve_is_mailbox(priv)) {
+		ret = priv->ctrl_ops->get_device_properties(priv);
+		if (ret != 0) {
+			PMD_DRV_LOG(ERR,
+				"Port %u: Failed to renegotiate device properties",
+				port_id);
+			goto recover_fail;
+		}
+	}
+
 	ret = gve_configure_device_resources(priv);
 	if (ret != 0)
 		goto recover_fail;
@@ -2016,9 +2027,16 @@ static const struct gve_ctrl_ops gve_adminq_ops = {
 	.unregister_page_list = gve_adminq_unregister_page_list,
 };
 
+static bool
+gve_mbx_check_device_needs_reset(struct gve_priv *priv)
+{
+	return gve_mbx_in_reset(priv->mbx);
+}
+
 static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.init_ctrl_plane = gve_mbx_init,
 	.free_ctrl_plane = gve_mbx_teardown,
+	.check_device_needs_reset = gve_mbx_check_device_needs_reset,
 	.get_device_properties = gve_mbx_get_device_properties,
 	.configure_device_resources = gve_mbx_get_interrupt_dbs,
 	.get_ptype_map = gve_mbx_get_ptype_map,

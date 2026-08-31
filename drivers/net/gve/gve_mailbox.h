@@ -430,6 +430,7 @@ int gve_mbx_delete_flow_rule(struct gve_priv *priv, uint32_t rule_id);
 int gve_mbx_reset_flow_rules(struct gve_priv *priv);
 
 int gve_mbx_reset(struct gve_priv *priv);
+bool gve_mbx_in_reset(struct gve_mailbox *mbx);
 int gve_mbx_init(struct gve_priv *priv);
 void gve_mbx_teardown(struct gve_priv *priv);
 int gve_mbx_get_device_properties(struct gve_priv *priv);
@@ -441,4 +442,3 @@ int gve_mbx_create_tx_queues(struct gve_priv *priv, uint32_t num_queues);
 int gve_mbx_destroy_tx_queues(struct gve_priv *priv, uint32_t num_queues);
 int gve_mbx_create_rx_queues(struct gve_priv *priv, uint32_t num_queues);
 int gve_mbx_destroy_rx_queues(struct gve_priv *priv, uint32_t num_queues);
-
