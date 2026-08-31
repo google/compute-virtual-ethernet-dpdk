@@ -773,6 +773,8 @@ gve_dev_close(struct rte_eth_dev *dev)
 	pthread_mutex_destroy(&priv->flow_rule_lock);
 	pthread_mutex_destroy(&priv->nic_ts_lock);
 
+	gve_free_rss_config(&priv->rss_config);
+
 	dev->data->mac_addrs = NULL;
 
 	return err;
