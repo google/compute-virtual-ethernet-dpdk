@@ -281,6 +281,21 @@ enum gve_dev_clk_type {
 	GVE_DEV_CLK_MMIO,
 };
 
+struct gve_rxq_config {
+	uint16_t nb_descriptors;
+	unsigned int socket_id;
+	struct rte_eth_rxconf conf;
+	struct rte_mempool *mb_pool;
+	bool allocated;
+};
+
+struct gve_txq_config {
+	uint16_t nb_descriptors;
+	unsigned int socket_id;
+	struct rte_eth_txconf conf;
+	bool allocated;
+};
+
 struct gve_ctrl_ops {
 	int (*init_ctrl_plane)(struct gve_priv *priv);
 	void (*free_ctrl_plane)(struct gve_priv *priv);
@@ -350,6 +365,10 @@ struct gve_priv {
 	uint16_t max_nb_txq;
 	uint16_t max_nb_rxq;
 	uint32_t num_ntfy_blks; /* spilt between TX and RX so must be even */
+
+	struct gve_rxq_config *rxq_configs;
+	struct gve_txq_config *txq_configs;
+	uint32_t reset_generation;
 
 	uint16_t tx_queue_watchdog_timeout_ms;
 	uint16_t max_packet_buffer_size;
@@ -633,6 +652,18 @@ gve_tx_queue_release_dqo(struct rte_eth_dev *dev, uint16_t qid);
 
 void
 gve_rx_queue_release_dqo(struct rte_eth_dev *dev, uint16_t qid);
+
+void
+gve_rx_queue_release_internal(struct gve_rx_queue *rxq);
+
+void
+gve_rx_queue_release_internal_dqo(struct gve_rx_queue *rxq);
+
+void
+gve_tx_queue_release_internal(struct gve_tx_queue *txq);
+
+void
+gve_tx_queue_release_internal_dqo(struct gve_tx_queue *txq);
 
 int
 gve_rx_queue_start_dqo(struct rte_eth_dev *dev, uint16_t rx_queue_id);

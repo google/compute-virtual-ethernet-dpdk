@@ -267,10 +267,8 @@ gve_release_rxq_mbufs_dqo(struct gve_rx_queue *rxq)
 }
 
 void
-gve_rx_queue_release_dqo(struct rte_eth_dev *dev, uint16_t qid)
+gve_rx_queue_release_internal_dqo(struct gve_rx_queue *q)
 {
-	struct gve_rx_queue *q = dev->data->rx_queues[qid];
-
 	if (q == NULL)
 		return;
 
@@ -283,7 +281,21 @@ gve_rx_queue_release_dqo(struct rte_eth_dev *dev, uint16_t qid)
 	rte_memzone_free(q->qres_mz);
 	q->qres = NULL;
 	rte_free(q);
+}
 
+void
+gve_rx_queue_release_dqo(struct rte_eth_dev *dev, uint16_t qid)
+{
+	struct gve_priv *priv = dev->data->dev_private;
+	struct gve_rx_queue *q = dev->data->rx_queues[qid];
+
+	if (q == NULL)
+		return;
+
+	if (priv->rxq_configs)
+		priv->rxq_configs[qid].allocated = false;
+
+	gve_rx_queue_release_internal_dqo(q);
 	dev->data->rx_queues[qid] = NULL;
 }
 
@@ -326,6 +338,7 @@ gve_rx_queue_setup_dqo(struct rte_eth_dev *dev, uint16_t queue_id,
 		       struct rte_mempool *pool)
 {
 	struct gve_priv *hw = dev->data->dev_private;
+	char ring_name[RTE_MEMZONE_NAMESIZE];
 	const struct rte_memzone *mz;
 	struct gve_rx_queue *rxq;
 	uint16_t free_thresh;
@@ -417,7 +430,8 @@ gve_rx_queue_setup_dqo(struct rte_eth_dev *dev, uint16_t queue_id,
 	}
 
 	/* Allocate RX buffer queue */
-	mz = rte_eth_dma_zone_reserve(dev, "rx_ring", queue_id,
+	snprintf(ring_name, sizeof(ring_name), "rx_ring_g%u", hw->reset_generation);
+	mz = rte_eth_dma_zone_reserve(dev, ring_name, queue_id,
 				      nb_desc * sizeof(struct gve_rx_desc_dqo),
 				      PAGE_SIZE, socket_id);
 	if (mz == NULL) {
@@ -430,7 +444,8 @@ gve_rx_queue_setup_dqo(struct rte_eth_dev *dev, uint16_t queue_id,
 	rxq->mz = mz;
 
 	/* Allocate RX completion queue */
-	mz = rte_eth_dma_zone_reserve(dev, "compl_ring", queue_id,
+	snprintf(ring_name, sizeof(ring_name), "rx_compl_ring_g%u", hw->reset_generation);
+	mz = rte_eth_dma_zone_reserve(dev, ring_name, queue_id,
 				      nb_desc * sizeof(struct gve_rx_compl_desc_dqo),
 				      PAGE_SIZE, socket_id);
 	if (mz == NULL) {
@@ -444,7 +459,8 @@ gve_rx_queue_setup_dqo(struct rte_eth_dev *dev, uint16_t queue_id,
 	rxq->compl_ring_phys_addr = mz->iova;
 	rxq->compl_ring_mz = mz;
 
-	mz = rte_eth_dma_zone_reserve(dev, "rxq_res", queue_id,
+	snprintf(ring_name, sizeof(ring_name), "rxq_res_g%u", hw->reset_generation);
+	mz = rte_eth_dma_zone_reserve(dev, ring_name, queue_id,
 				      sizeof(struct gve_queue_resources),
 				      PAGE_SIZE, socket_id);
 	if (mz == NULL) {
@@ -456,6 +472,14 @@ gve_rx_queue_setup_dqo(struct rte_eth_dev *dev, uint16_t queue_id,
 	rxq->qres_mz = mz;
 
 	gve_reset_rx_ring_state_dqo(rxq);
+
+	if (hw->rxq_configs) {
+		hw->rxq_configs[queue_id].nb_descriptors = nb_desc;
+		hw->rxq_configs[queue_id].socket_id = socket_id;
+		hw->rxq_configs[queue_id].conf = *conf;
+		hw->rxq_configs[queue_id].mb_pool = pool;
+		hw->rxq_configs[queue_id].allocated = true;
+	}
 
 	dev->data->rx_queues[queue_id] = rxq;
 

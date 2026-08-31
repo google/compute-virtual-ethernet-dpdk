@@ -159,8 +159,9 @@ gve_setup_queue_page_list(struct gve_priv *priv, uint16_t queue_id, bool is_rx,
 	int err;
 
 	/* Allocate a new QPL. */
-	snprintf(qpl_name, sizeof(qpl_name), "gve_%s_%s_qpl%d",
-		priv->pci_dev->device.name, queue_type_string, queue_id);
+	snprintf(qpl_name, sizeof(qpl_name), "gve_%s_%s_qpl%d_g%u",
+		priv->pci_dev->device.name, queue_type_string, queue_id,
+		priv->reset_generation);
 	qpl = gve_alloc_queue_page_list(qpl_name, num_pages, is_rx);
 	if (!qpl) {
 		PMD_DRV_LOG(ERR,
@@ -247,6 +248,25 @@ gve_dev_configure(struct rte_eth_dev *dev)
 
 		gve_free_rss_config(&update_reta_config);
 		return err;
+	}
+
+	if (!priv->rxq_configs) {
+		priv->rxq_configs = rte_zmalloc("gve_rxq_configs",
+			sizeof(struct gve_rxq_config) * priv->max_nb_rxq,
+			RTE_CACHE_LINE_SIZE);
+		if (!priv->rxq_configs)
+			return -ENOMEM;
+	}
+
+	if (!priv->txq_configs) {
+		priv->txq_configs = rte_zmalloc("gve_txq_configs",
+			sizeof(struct gve_txq_config) * priv->max_nb_txq,
+			RTE_CACHE_LINE_SIZE);
+		if (!priv->txq_configs) {
+			rte_free(priv->rxq_configs);
+			priv->rxq_configs = NULL;
+			return -ENOMEM;
+		}
 	}
 
 	return 0;
@@ -774,6 +794,11 @@ gve_dev_close(struct rte_eth_dev *dev)
 	pthread_mutex_destroy(&priv->nic_ts_lock);
 
 	gve_free_rss_config(&priv->rss_config);
+
+	rte_free(priv->rxq_configs);
+	priv->rxq_configs = NULL;
+	rte_free(priv->txq_configs);
+	priv->txq_configs = NULL;
 
 	dev->data->mac_addrs = NULL;
 
@@ -1856,6 +1881,7 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 	priv->pci_dev = pci_dev;
 	priv->eth_dev = eth_dev;
 	priv->state_flags = 0x0;
+	priv->reset_generation = 0;
 
 	pthread_mutexattr_init(&mutexattr);
 	pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED);

@@ -536,10 +536,8 @@ gve_release_txq_mbufs(struct gve_tx_queue *txq)
 }
 
 void
-gve_tx_queue_release(struct rte_eth_dev *dev, uint16_t qid)
+gve_tx_queue_release_internal(struct gve_tx_queue *q)
 {
-	struct gve_tx_queue *q = dev->data->tx_queues[qid];
-
 	if (!q)
 		return;
 
@@ -555,7 +553,21 @@ gve_tx_queue_release(struct rte_eth_dev *dev, uint16_t qid)
 	rte_memzone_free(q->qres_mz);
 	q->qres = NULL;
 	rte_free(q);
+}
 
+void
+gve_tx_queue_release(struct rte_eth_dev *dev, uint16_t qid)
+{
+	struct gve_priv *priv = dev->data->dev_private;
+	struct gve_tx_queue *q = dev->data->tx_queues[qid];
+
+	if (!q)
+		return;
+
+	if (priv->txq_configs)
+		priv->txq_configs[qid].allocated = false;
+
+	gve_tx_queue_release_internal(q);
 	dev->data->tx_queues[qid] = NULL;
 }
 
@@ -564,6 +576,7 @@ gve_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id, uint16_t nb_desc,
 		   unsigned int socket_id, const struct rte_eth_txconf *conf)
 {
 	struct gve_priv *hw = dev->data->dev_private;
+	char ring_name[RTE_MEMZONE_NAMESIZE];
 	const struct rte_memzone *mz;
 	struct gve_tx_queue *txq;
 	uint16_t free_thresh;
@@ -618,7 +631,8 @@ gve_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id, uint16_t nb_desc,
 		goto err_txq;
 	}
 
-	mz = rte_eth_dma_zone_reserve(dev, "tx_ring", queue_id,
+	snprintf(ring_name, sizeof(ring_name), "tx_ring_g%u", hw->reset_generation);
+	mz = rte_eth_dma_zone_reserve(dev, ring_name, queue_id,
 				      nb_desc * sizeof(union gve_tx_desc),
 				      PAGE_SIZE, socket_id);
 	if (mz == NULL) {
@@ -651,7 +665,8 @@ gve_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id, uint16_t nb_desc,
 		}
 	}
 
-	mz = rte_eth_dma_zone_reserve(dev, "txq_res", queue_id, sizeof(struct gve_queue_resources),
+	snprintf(ring_name, sizeof(ring_name), "txq_res_g%u", hw->reset_generation);
+	mz = rte_eth_dma_zone_reserve(dev, ring_name, queue_id, sizeof(struct gve_queue_resources),
 				      PAGE_SIZE, socket_id);
 	if (mz == NULL) {
 		PMD_DRV_LOG(ERR, "Failed to reserve DMA memory for TX resource");
@@ -662,6 +677,13 @@ gve_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_id, uint16_t nb_desc,
 	txq->qres_mz = mz;
 
 	gve_reset_txq(txq);
+
+	if (hw->txq_configs) {
+		hw->txq_configs[queue_id].nb_descriptors = nb_desc;
+		hw->txq_configs[queue_id].socket_id = socket_id;
+		hw->txq_configs[queue_id].conf = *conf;
+		hw->txq_configs[queue_id].allocated = true;
+	}
 
 	dev->data->tx_queues[queue_id] = txq;
 
