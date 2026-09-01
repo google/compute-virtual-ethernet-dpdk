@@ -863,11 +863,19 @@ gve_teardown_flow_subsystem(struct gve_priv *priv)
 }
 
 static void
-gve_teardown_device_resources(struct gve_priv *priv)
+gve_free_device_resources(struct gve_priv *priv)
+{
+	gve_teardown_nic_timestamp(priv);
+	gve_free_ptype_lut_dqo(priv);
+	gve_free_counter_array(priv);
+	gve_free_irq_db(priv);
+}
+
+static void
+gve_deconfigure_device_resources(struct gve_priv *priv)
 {
 	int err;
 
-	/* Tell device its resources are being freed */
 	if (gve_get_device_resources_ok(priv)) {
 		if (priv->ctrl_ops->deconfigure_device_resources) {
 			err = priv->ctrl_ops->deconfigure_device_resources(priv);
@@ -878,10 +886,6 @@ gve_teardown_device_resources(struct gve_priv *priv)
 		}
 	}
 
-	gve_teardown_nic_timestamp(priv);
-	gve_free_ptype_lut_dqo(priv);
-	gve_free_counter_array(priv);
-	gve_free_irq_db(priv);
 	gve_clear_device_resources_ok(priv);
 }
 
@@ -910,7 +914,8 @@ gve_dev_close(struct rte_eth_dev *dev)
 	priv->zombie_rx_queues = NULL;
 	priv->zombie_tx_queues = NULL;
 
-	gve_teardown_device_resources(priv);
+	gve_deconfigure_device_resources(priv);
+	gve_free_device_resources(priv);
 	priv->ctrl_ops->free_ctrl_plane(priv);
 
 	pthread_mutex_destroy(&priv->flow_rule_lock);
@@ -951,7 +956,8 @@ gve_dev_reset(struct rte_eth_dev *dev)
 	 * destroyed on dev_close.
 	 */
 	gve_free_queues(dev);
-	gve_teardown_device_resources(priv);
+	gve_deconfigure_device_resources(priv);
+	gve_free_device_resources(priv);
 	priv->ctrl_ops->free_ctrl_plane(priv);
 
 	err = gve_init_priv(priv, true);
@@ -1666,16 +1672,15 @@ gve_setup_nic_timestamp(struct gve_priv *priv)
 }
 
 static int
-gve_setup_device_resources(struct gve_priv *priv)
+gve_alloc_device_resources(struct gve_priv *priv)
 {
 	char z_name[RTE_MEMZONE_NAMESIZE];
 	const struct rte_memzone *mz;
-	int err = 0;
 
 	/* TODO: Refactor to clean up for upstreaming. Ideally, branching on mode
-	 * should be kept to a minimum, so we can rely just on control ops to
-	 * decide behavior.
-	 */
+	* should be kept to a minimum, so we can rely just on control ops to
+	* decide behavior.
+	*/
 	if (!gve_is_mailbox(priv)) {
 		snprintf(z_name, sizeof(z_name), "gve_%s_cnt_arr", priv->pci_dev->device.name);
 		mz = rte_memzone_reserve_aligned(z_name,
@@ -1696,17 +1701,10 @@ gve_setup_device_resources(struct gve_priv *priv)
 				PAGE_SIZE);
 		if (mz == NULL) {
 			PMD_DRV_LOG(ERR, "Could not alloc memzone for irq_dbs");
-			err = -ENOMEM;
-			goto free_cnt_array;
+			goto err_free;
 		}
 		priv->irq_dbs = (struct gve_irq_db *)mz->addr;
 		priv->irq_dbs_mz = mz;
-	}
-
-	err = priv->ctrl_ops->configure_device_resources(priv);
-	if (unlikely(err)) {
-		PMD_DRV_LOG(ERR, "Could not config device resources: err=%d", err);
-		goto free_irq_dbs;
 	}
 
 	if (!gve_is_gqi(priv)) {
@@ -1714,13 +1712,33 @@ gve_setup_device_resources(struct gve_priv *priv)
 			sizeof(struct gve_ptype_lut), 0);
 		if (priv->ptype_lut_dqo == NULL) {
 			PMD_DRV_LOG(ERR, "Failed to alloc ptype lut.");
-			err = -ENOMEM;
-			goto free_irq_dbs;
+			goto err_free;
 		}
+	}
+
+	return 0;
+
+err_free:
+	gve_free_device_resources(priv);
+	return -ENOMEM;
+}
+
+static int
+gve_configure_device_resources(struct gve_priv *priv)
+{
+	int err;
+
+	err = priv->ctrl_ops->configure_device_resources(priv);
+	if (unlikely(err)) {
+		PMD_DRV_LOG(ERR, "Could not config device resources: err=%d", err);
+		return err;
+	}
+
+	if (!gve_is_gqi(priv)) {
 		err = priv->ctrl_ops->get_ptype_map(priv);
 		if (unlikely(err)) {
 			PMD_DRV_LOG(ERR, "Failed to get ptype map: err=%d", err);
-			goto free_ptype_lut;
+			return err;
 		}
 	}
 	gve_setup_nic_timestamp(priv);
@@ -1728,15 +1746,6 @@ gve_setup_device_resources(struct gve_priv *priv)
 	gve_set_device_resources_ok(priv);
 
 	return 0;
-free_ptype_lut:
-	rte_free(priv->ptype_lut_dqo);
-	priv->ptype_lut_dqo = NULL;
-free_irq_dbs:
-	gve_free_irq_db(priv);
-free_cnt_array:
-	gve_free_counter_array(priv);
-
-	return err;
 }
 
 static void
@@ -1891,19 +1900,19 @@ gve_init_priv(struct gve_priv *priv, bool skip_describe_device)
 	err = priv->ctrl_ops->get_device_properties(priv);
 	if (err) {
 		PMD_DRV_LOG(ERR, "Could not get device information: err=%d", err);
-		goto free_adminq;
+		goto free_ctrl_plane;
 	}
 
 	num_ntfy = pci_dev_msix_vec_count(priv->pci_dev);
 	if (num_ntfy <= 0) {
 		PMD_DRV_LOG(ERR, "Could not count MSI-x vectors");
 		err = -EIO;
-		goto free_adminq;
+		goto free_ctrl_plane;
 	} else if (num_ntfy < GVE_MIN_MSIX) {
 		PMD_DRV_LOG(ERR, "GVE needs at least %d MSI-x vectors, but only has %d",
 			    GVE_MIN_MSIX, num_ntfy);
 		err = -EINVAL;
-		goto free_adminq;
+		goto free_ctrl_plane;
 	}
 
 	priv->num_registered_pages = 0;
@@ -1938,11 +1947,22 @@ setup_device:
 				    "Failed to set up flow subsystem: err=%d, flow steering will be disabled.",
 				    err);
 	}
+	err = gve_alloc_device_resources(priv);
+	if (err)
+		goto free_flow_subsystem;
 
-	err = gve_setup_device_resources(priv);
-	if (!err)
-		return 0;
-free_adminq:
+	err = gve_configure_device_resources(priv);
+	if (err)
+		goto free_device_resources;
+
+	return 0;
+
+free_device_resources:
+	gve_free_device_resources(priv);
+free_flow_subsystem:
+	if (gve_get_flow_subsystem_ok(priv))
+		gve_teardown_flow_subsystem(priv);
+free_ctrl_plane:
 	priv->ctrl_ops->free_ctrl_plane(priv);
 	return err;
 }
