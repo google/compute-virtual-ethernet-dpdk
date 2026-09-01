@@ -401,22 +401,24 @@ static void gve_mbx_process_msg_completion(struct gve_mailbox *mbx,
 	if (rte_bitmap_get(msg_queue->msg_queue_map.bmp, index) || !mbx_msg) {
 		PMD_DRV_LOG(ERR, "No pending mailbox message for response: cookie=0x%x, opcode=0x%x",
 			    cookie, opcode);
-		return;
+		goto unlock;
 	}
 
 	if (mbx_msg->sw_cookie != cookie) {
 		PMD_DRV_LOG(ERR, "Mailbox cookie mismatch: expected 0x%x, received 0x%x.",
 			    mbx_msg->sw_cookie, cookie);
-		return;
+		goto unlock;
 	}
 
 	if (mbx_msg->opcode != opcode) {
 		PMD_DRV_LOG(ERR, "Mailbox opcode mismatch: expected 0x%x, recieved 0x%x.",
 			    mbx_msg->opcode, opcode);
-		return;
+		goto unlock;
 	}
 
 	gve_mbx_msg_complete(mbx_msg, status);
+
+unlock:
 	rte_spinlock_unlock(&msg_queue->mbx_msg_q_lock);
 }
 
