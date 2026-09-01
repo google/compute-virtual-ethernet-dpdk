@@ -311,7 +311,6 @@ struct gve_ctrl_ops {
 	void (*free_ctrl_plane)(struct gve_priv *priv);
 	int (*get_device_properties)(struct gve_priv *priv);
 	int (*get_ptype_map)(struct gve_priv *priv);
-	int (*get_interrupt_dbs)(struct gve_priv *priv);
 	void (*free_db_resources)(struct gve_priv *priv);
 	int (*setup_mgmt_irq)(struct gve_priv *priv);
 	void (*teardown_mgmt_irq)(struct gve_priv *priv);

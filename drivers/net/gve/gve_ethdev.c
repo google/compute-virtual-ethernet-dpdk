@@ -800,8 +800,15 @@ gve_free_counter_array(struct gve_priv *priv)
 static void
 gve_free_irq_db(struct gve_priv *priv)
 {
-	rte_memzone_free(priv->irq_dbs_mz);
-	priv->irq_dbs = NULL;
+	if (priv->irq_dbs_mz != NULL) {
+		rte_memzone_free(priv->irq_dbs_mz);
+		priv->irq_dbs_mz = NULL;
+		priv->irq_dbs = NULL;
+	}
+	if (priv->irq_db_offsets != NULL) {
+		rte_free(priv->irq_db_offsets);
+		priv->irq_db_offsets = NULL;
+	}
 }
 
 static void
@@ -1694,25 +1701,14 @@ gve_setup_device_resources(struct gve_priv *priv)
 		}
 		priv->irq_dbs = (struct gve_irq_db *)mz->addr;
 		priv->irq_dbs_mz = mz;
-
-		err = priv->ctrl_ops->configure_device_resources(priv);
-		if (unlikely(err)) {
-			PMD_DRV_LOG(ERR, "Could not config device resources: err=%d", err);
-			goto free_irq_dbs;
-		}
-	} else {
-		err = priv->ctrl_ops->get_interrupt_dbs(priv);
-		if (unlikely(err)) {
-			PMD_DRV_LOG(ERR, "Could not get interrupt doorbells: err=%d", err);
-			return err;
-		}
-		if (priv->negotiated_caps & GVE_MBX_CAP_NIC_TSTAMP_REG) {
-			err = priv->ctrl_ops->get_info_nic_tstamp_reg(priv);
-			if (unlikely(err))
-				PMD_DRV_LOG(WARNING,
-					"Failed to get NIC timestamp register info: err=%d", err);
-		}
 	}
+
+	err = priv->ctrl_ops->configure_device_resources(priv);
+	if (unlikely(err)) {
+		PMD_DRV_LOG(ERR, "Could not config device resources: err=%d", err);
+		goto free_irq_dbs;
+	}
+
 	if (!gve_is_gqi(priv)) {
 		priv->ptype_lut_dqo = rte_zmalloc("gve_ptype_lut_dqo",
 			sizeof(struct gve_ptype_lut), 0);
@@ -1853,7 +1849,7 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.init_ctrl_plane = gve_mbx_init,
 	.free_ctrl_plane = gve_mbx_teardown,
 	.get_device_properties = gve_mbx_get_device_properties,
-	.get_interrupt_dbs = gve_mbx_get_interrupt_dbs,
+	.configure_device_resources = gve_mbx_get_interrupt_dbs,
 	.get_ptype_map = gve_mbx_get_ptype_map,
 	.report_link_speed = gve_mbx_report_link_speed,
 	.get_info_nic_tstamp_reg = gve_mbx_get_info_nic_tstamp_reg,
