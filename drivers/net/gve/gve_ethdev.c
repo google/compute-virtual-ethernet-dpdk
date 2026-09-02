@@ -562,10 +562,14 @@ gve_dev_start(struct rte_eth_dev *dev)
 		return -EPERM;
 	}
 
+	priv = dev->data->dev_private;
+
+	pthread_mutex_lock(&priv->reset_lock);
+
 	ret = gve_start_queues(dev);
 	if (ret != 0) {
 		PMD_DRV_LOG(ERR, "Failed to start queues");
-		return ret;
+		goto unlock_and_return;
 	}
 
 	dev->data->dev_started = 1;
@@ -584,20 +588,23 @@ gve_dev_start(struct rte_eth_dev *dev)
 		if (ret != 0) {
 			PMD_DRV_LOG(ERR,
 				"Failed to allocate region for stats reporting.");
-			return ret;
+			goto unlock_and_return;
 		}
 		ret = priv->ctrl_ops->setup_stats_report(priv, priv->stats_report_len,
 				priv->stats_report_mem->iova,
 				GVE_STATS_REPORT_TIMER_PERIOD);
 		if (ret != 0) {
 			PMD_DRV_LOG(ERR, "setup_stats_report command failed.");
-			return ret;
+			goto unlock_and_return;
 		}
 	}
 
 	gve_start_dev_status_polling(dev);
+	ret = 0;
 
-	return 0;
+unlock_and_return:
+	pthread_mutex_unlock(&priv->reset_lock);
+	return ret;
 }
 
 static inline uint64_t
@@ -747,9 +754,13 @@ gve_dev_stop(struct rte_eth_dev *dev)
 
 	/*
 	 * Block until all polling callbacks have concluded before tearing down
-	 * any device resources.
+	 * any device resources. Do so before trying to acquire the reset lock
+	 * because a polling callback could be invoking a reset which will
+	 * itself try to acquire the lock.
 	 */
 	gve_stop_dev_status_polling(dev);
+
+	pthread_mutex_lock(&priv->reset_lock);
 
 	dev->data->dev_started = 0;
 	dev->data->dev_link.link_status = RTE_ETH_LINK_DOWN;
@@ -765,6 +776,8 @@ gve_dev_stop(struct rte_eth_dev *dev)
 
 	if (gve_is_gqi(dev->data->dev_private))
 		gve_free_stats_report(dev);
+
+	pthread_mutex_unlock(&priv->reset_lock);
 
 	return 0;
 }
@@ -946,6 +959,8 @@ gve_dev_reset(struct rte_eth_dev *dev)
 		return -EPERM;
 	}
 
+	pthread_mutex_lock(&priv->reset_lock);
+
 	/* Tear down all device resources before re-initializing. */
 	if (gve_get_flow_subsystem_ok(priv))
 		gve_teardown_flow_subsystem(priv);
@@ -965,8 +980,11 @@ gve_dev_reset(struct rte_eth_dev *dev)
 		PMD_DRV_LOG(ERR,
 			"Failed to re-init device on port %u after reset.",
 			dev->data->port_id);
+		pthread_mutex_unlock(&priv->reset_lock);
 		return err;
 	}
+
+	pthread_mutex_unlock(&priv->reset_lock);
 
 	return 0;
 }
@@ -2021,6 +2039,12 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 	pthread_mutex_init(&priv->nic_ts_lock, &mutexattr);
 	pthread_mutexattr_destroy(&mutexattr);
 	rte_spinlock_init(&priv->clk_lock);
+
+	pthread_mutexattr_init(&mutexattr);
+	pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED);
+	pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(&priv->reset_lock, &mutexattr);
+	pthread_mutexattr_destroy(&mutexattr);
 
 	priv->mbuf_timestamp_offset = -1;
 	err = gve_init_priv(priv, false);

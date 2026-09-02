@@ -383,6 +383,8 @@ struct gve_priv {
 	struct gve_tx_queue **zombie_tx_queues;
 	rte_spinlock_t zombie_lock;
 
+	pthread_mutex_t reset_lock;
+
 	uint16_t tx_queue_watchdog_timeout_ms;
 	uint16_t max_packet_buffer_size;
 	uint16_t max_header_buffer_size;
