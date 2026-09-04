@@ -40,6 +40,98 @@ gve_alloc_using_mz(const char *name, uint32_t num_pages)
 	return mz;
 }
 
+static void
+gve_free_zombie_queue(struct gve_priv *priv, void *q, bool is_rx)
+{
+	if (is_rx) {
+		struct gve_rx_queue *rxq = q;
+
+		if (gve_is_gqi(priv))
+			gve_rx_queue_release_internal(rxq);
+		else
+			gve_rx_queue_release_internal_dqo(rxq);
+	} else {
+		struct gve_tx_queue *txq = q;
+
+		if (gve_is_gqi(priv))
+			gve_tx_queue_release_internal(txq);
+		else
+			gve_tx_queue_release_internal_dqo(txq);
+	}
+}
+
+void
+gve_add_zombie_rx_queue(struct gve_priv *priv, struct gve_rx_queue *rxq)
+{
+	uint16_t queue_id;
+
+	if (!rxq)
+		return;
+
+	queue_id = rxq->queue_id;
+	if (queue_id >= priv->max_nb_rxq)
+		return;
+
+	if (priv->zombie_rx_queues[queue_id])
+		gve_free_zombie_queue(priv, priv->zombie_rx_queues[queue_id],
+					/*is_rx=*/true);
+
+	priv->zombie_rx_queues[queue_id] = rxq;
+
+	rxq->zombie_retire_time = rte_get_timer_cycles() + (rte_get_timer_hz() *
+					ZOMBIE_QUEUE_TTL_S);
+}
+
+void
+gve_add_zombie_tx_queue(struct gve_priv *priv, struct gve_tx_queue *txq)
+{
+	uint16_t queue_id;
+
+	if (!txq)
+		return;
+
+	queue_id = txq->queue_id;
+	if (queue_id >= priv->max_nb_txq)
+		return;
+
+	if (priv->zombie_tx_queues[queue_id])
+		gve_free_zombie_queue(priv, priv->zombie_tx_queues[queue_id],
+					/*is_rx=*/false);
+
+	priv->zombie_tx_queues[queue_id] = txq;
+
+	txq->zombie_retire_time = rte_get_timer_cycles() + (rte_get_timer_hz() *
+					ZOMBIE_QUEUE_TTL_S);
+}
+
+void
+gve_clean_zombie_queues(struct gve_priv *priv, bool force)
+{
+	uint64_t now = rte_get_timer_cycles();
+	struct gve_rx_queue *rxq;
+	struct gve_tx_queue *txq;
+	int i;
+
+	if (!priv)
+		return;
+
+	for (i = 0; i < priv->max_nb_rxq; i++) {
+		rxq = priv->zombie_rx_queues[i];
+		if (rxq && (rxq->zombie_retire_time <= now || force)) {
+			gve_free_zombie_queue(priv, rxq, /*is_rx=*/true);
+			priv->zombie_rx_queues[i] = NULL;
+		}
+	}
+
+	for (i = 0; i < priv->max_nb_txq; i++) {
+		txq = priv->zombie_tx_queues[i];
+		if (txq && (txq->zombie_retire_time <= now || force)) {
+			gve_free_zombie_queue(priv, txq, /*is_rx=*/false);
+			priv->zombie_tx_queues[i] = NULL;
+		}
+	}
+}
+
 static int
 gve_alloc_using_malloc(void **bufs, uint32_t num_entries)
 {
@@ -265,6 +357,24 @@ gve_dev_configure(struct rte_eth_dev *dev)
 		if (!priv->txq_configs) {
 			rte_free(priv->rxq_configs);
 			priv->rxq_configs = NULL;
+			return -ENOMEM;
+		}
+	}
+
+	if (!priv->zombie_rx_queues) {
+		priv->zombie_rx_queues = rte_zmalloc("gve_zombie_rxqs",
+			sizeof(struct gve_rx_queue *) * priv->max_nb_rxq,
+			RTE_CACHE_LINE_SIZE);
+		if (!priv->zombie_rx_queues) {
+			return -ENOMEM;
+		}
+	}
+
+	if (!priv->zombie_tx_queues) {
+		priv->zombie_tx_queues = rte_zmalloc("gve_zombie_txqs",
+			sizeof(struct gve_tx_queue *) * priv->max_nb_txq,
+			RTE_CACHE_LINE_SIZE);
+		if (!priv->zombie_tx_queues) {
 			return -ENOMEM;
 		}
 	}
@@ -787,6 +897,12 @@ gve_dev_close(struct rte_eth_dev *dev)
 		gve_teardown_flow_subsystem(priv);
 
 	gve_free_queues(dev);
+	gve_clean_zombie_queues(priv, true);
+	rte_free(priv->zombie_rx_queues);
+	rte_free(priv->zombie_tx_queues);
+	priv->zombie_rx_queues = NULL;
+	priv->zombie_tx_queues = NULL;
+
 	gve_teardown_device_resources(priv);
 	priv->ctrl_ops->free_ctrl_plane(priv);
 

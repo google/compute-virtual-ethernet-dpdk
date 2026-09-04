@@ -39,6 +39,8 @@
 #define GVE_RX_MIN_BUF_SIZE_GQI		2048
 #define GVE_RX_MAX_BUF_SIZE_GQI		4096
 
+#define ZOMBIE_QUEUE_TTL_S		5
+
 #define GVE_RSS_HASH_KEY_SIZE 40
 #define GVE_RSS_INDIR_SIZE 128
 
@@ -199,6 +201,10 @@ struct gve_tx_queue {
 	struct gve_tx_queue *complq;
 
 	uint8_t is_gqi_qpl;
+
+	/* For handling deferred freeing after device reset */
+	struct gve_tx_queue *zombie_next;
+	uint64_t zombie_retire_time;
 };
 
 struct gve_rx_ctx {
@@ -262,6 +268,10 @@ struct gve_rx_queue {
 
 	uint8_t is_gqi_qpl;
 	bool timestamp_enabled;
+
+	/* For handling deferred freeing after device reset */
+	struct gve_rx_queue *zombie_next;
+	uint64_t zombie_retire_time;
 };
 
 struct gve_flow {
@@ -369,6 +379,10 @@ struct gve_priv {
 	struct gve_rxq_config *rxq_configs;
 	struct gve_txq_config *txq_configs;
 	uint32_t reset_generation;
+
+	struct gve_rx_queue **zombie_rx_queues;
+	struct gve_tx_queue **zombie_tx_queues;
+	rte_spinlock_t zombie_lock;
 
 	uint16_t tx_queue_watchdog_timeout_ms;
 	uint16_t max_packet_buffer_size;
@@ -664,6 +678,15 @@ gve_tx_queue_release_internal(struct gve_tx_queue *txq);
 
 void
 gve_tx_queue_release_internal_dqo(struct gve_tx_queue *txq);
+
+void
+gve_add_zombie_rx_queue(struct gve_priv *priv, struct gve_rx_queue *rxq);
+
+void
+gve_add_zombie_tx_queue(struct gve_priv *priv, struct gve_tx_queue *txq);
+
+void
+gve_clean_zombie_queues(struct gve_priv *priv, bool force);
 
 int
 gve_rx_queue_start_dqo(struct rte_eth_dev *dev, uint16_t rx_queue_id);
