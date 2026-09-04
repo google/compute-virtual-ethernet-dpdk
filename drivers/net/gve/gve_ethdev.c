@@ -1780,15 +1780,10 @@ gve_check_device_status(void *arg)
 {
 	struct rte_eth_dev *dev = arg;
 	struct gve_priv *priv = dev->data->dev_private;
-	uint32_t dev_status;
 	int ret;
 
-	if (gve_is_mailbox(priv))
-		return;
-
-	dev_status = ioread32be(&priv->reg_bar0->device_status);
-
-	if (dev_status & GVE_DEVICE_STATUS_RESET_MASK) {
+	if (priv->ctrl_ops->check_device_needs_reset &&
+	    priv->ctrl_ops->check_device_needs_reset(priv)) {
 		PMD_DRV_LOG(INFO,
 			"Device on port %u requests a reset. Stopping device status polling.",
 			dev->data->port_id);
@@ -1849,9 +1844,17 @@ gve_adminq_get_device_properties(struct gve_priv *priv)
 	return gve_adminq_describe_device(priv);
 }
 
+static bool
+gve_adminq_check_device_needs_reset(struct gve_priv *priv)
+{
+	uint32_t dev_status = ioread32be(&priv->reg_bar0->device_status);
+	return (dev_status & GVE_DEVICE_STATUS_RESET_MASK) != 0;
+}
+
 static const struct gve_ctrl_ops gve_adminq_ops = {
 	.init_ctrl_plane = gve_adminq_alloc,
 	.free_ctrl_plane = gve_adminq_free,
+	.check_device_needs_reset = gve_adminq_check_device_needs_reset,
 	.get_device_properties = gve_adminq_get_device_properties,
 	.get_ptype_map = gve_adminq_get_ptype_map_dqo,
 	.create_tx_queues = gve_adminq_create_tx_queues,
