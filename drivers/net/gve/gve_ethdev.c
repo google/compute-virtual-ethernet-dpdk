@@ -946,48 +946,6 @@ gve_dev_close(struct rte_eth_dev *dev)
 	return err;
 }
 
-static int
-gve_dev_reset(struct rte_eth_dev *dev)
-{
-	struct gve_priv *priv = dev->data->dev_private;
-	int err;
-
-	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
-		PMD_DRV_LOG(ERR,
-			"Device reset on port %u not supported in secondary processes.",
-			dev->data->port_id);
-		return -EPERM;
-	}
-
-	pthread_mutex_lock(&priv->reset_lock);
-
-	/* Tear down all device resources before re-initializing. */
-	if (gve_get_flow_subsystem_ok(priv))
-		gve_teardown_flow_subsystem(priv);
-
-	/*
-	 * Note that gve_teardown_flow_subsystem does not destroy the
-	 * flow_rule_lock. The lock is preserved across device resets and only
-	 * destroyed on dev_close.
-	 */
-	gve_free_queues(dev);
-	gve_deconfigure_device_resources(priv);
-	gve_free_device_resources(priv);
-	priv->ctrl_ops->free_ctrl_plane(priv);
-
-	err = gve_init_priv(priv, true);
-	if (err != 0) {
-		PMD_DRV_LOG(ERR,
-			"Failed to re-init device on port %u after reset.",
-			dev->data->port_id);
-		pthread_mutex_unlock(&priv->reset_lock);
-		return err;
-	}
-
-	pthread_mutex_unlock(&priv->reset_lock);
-
-	return 0;
-}
 
 static int
 gve_verify_driver_compatibility(struct gve_priv *priv)
@@ -1108,6 +1066,7 @@ gve_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->flow_type_rss_offloads = GVE_RTE_RSS_OFFLOAD_ALL;
 	dev_info->hash_key_size = GVE_RSS_HASH_KEY_SIZE;
 	dev_info->reta_size = GVE_RSS_INDIR_SIZE;
+	dev_info->err_handle_mode = RTE_ETH_ERROR_HANDLE_MODE_PROACTIVE;
 
 	return 0;
 }
@@ -1590,63 +1549,6 @@ gve_read_clock(struct rte_eth_dev *dev, uint64_t *clock)
 	return 0;
 }
 
-static const struct eth_dev_ops gve_eth_dev_ops = {
-	.dev_configure        = gve_dev_configure,
-	.dev_start            = gve_dev_start,
-	.dev_stop             = gve_dev_stop,
-	.dev_close            = gve_dev_close,
-	.dev_reset            = gve_dev_reset,
-	.dev_infos_get        = gve_dev_info_get,
-	.rx_queue_setup       = gve_rx_queue_setup,
-	.tx_queue_setup       = gve_tx_queue_setup,
-	.rx_queue_release     = gve_rx_queue_release,
-	.tx_queue_release     = gve_tx_queue_release,
-	.rx_queue_start       = gve_rx_queue_start,
-	.tx_queue_start       = gve_tx_queue_start,
-	.rx_queue_stop        = gve_rx_queue_stop,
-	.tx_queue_stop        = gve_tx_queue_stop,
-	.flow_ops_get         = gve_flow_ops_get,
-	.link_update          = gve_link_update,
-	.stats_get            = gve_dev_stats_get,
-	.stats_reset          = gve_dev_stats_reset,
-	.mtu_set              = gve_dev_mtu_set,
-	.xstats_get           = gve_xstats_get,
-	.xstats_get_names     = gve_xstats_get_names,
-	.rss_hash_update      = gve_rss_hash_update,
-	.rss_hash_conf_get    = gve_rss_hash_conf_get,
-	.reta_update          = gve_rss_reta_update,
-	.reta_query           = gve_rss_reta_query,
-};
-
-static const struct eth_dev_ops gve_eth_dev_ops_dqo = {
-	.dev_configure        = gve_dev_configure,
-	.dev_start            = gve_dev_start,
-	.dev_stop             = gve_dev_stop,
-	.dev_close            = gve_dev_close,
-	.dev_reset            = gve_dev_reset,
-	.dev_infos_get        = gve_dev_info_get,
-	.rx_queue_setup       = gve_rx_queue_setup_dqo,
-	.tx_queue_setup       = gve_tx_queue_setup_dqo,
-	.rx_queue_release     = gve_rx_queue_release_dqo,
-	.tx_queue_release     = gve_tx_queue_release_dqo,
-	.rx_queue_start       = gve_rx_queue_start_dqo,
-	.tx_queue_start       = gve_tx_queue_start_dqo,
-	.rx_queue_stop        = gve_rx_queue_stop_dqo,
-	.tx_queue_stop        = gve_tx_queue_stop_dqo,
-	.flow_ops_get         = gve_flow_ops_get,
-	.link_update          = gve_link_update,
-	.stats_get            = gve_dev_stats_get,
-	.stats_reset          = gve_dev_stats_reset,
-	.mtu_set              = gve_dev_mtu_set,
-	.xstats_get           = gve_xstats_get,
-	.xstats_get_names     = gve_xstats_get_names,
-	.rss_hash_update      = gve_rss_hash_update,
-	.rss_hash_conf_get    = gve_rss_hash_conf_get,
-	.reta_update          = gve_rss_reta_update,
-	.reta_query           = gve_rss_reta_query,
-	.read_clock           = gve_read_clock,
-};
-
 static int
 pci_dev_msix_vec_count(struct rte_pci_device *pdev)
 {
@@ -1775,6 +1677,160 @@ gve_set_default_ring_size_bounds(struct gve_priv *priv)
 	priv->min_rx_desc_cnt = GVE_DEFAULT_MIN_RX_RING_SIZE;
 }
 
+static int
+gve_recreate_queues(struct rte_eth_dev *dev)
+{
+	struct gve_priv *priv = dev->data->dev_private;
+	uint16_t port_id = dev->data->port_id;
+	uint16_t i;
+	int ret;
+
+	if (priv->rxq_configs == NULL || priv->txq_configs == NULL) {
+		PMD_DRV_LOG(ERR, "Port %u: Queue configurations not allocated",
+			    port_id);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		struct gve_rxq_config *rx_cfg = &priv->rxq_configs[i];
+
+		if (!rx_cfg->allocated)
+			continue;
+
+		ret = dev->dev_ops->rx_queue_setup(dev, i, rx_cfg->nb_descriptors,
+						   rx_cfg->socket_id,
+						   &rx_cfg->conf,
+						   rx_cfg->mb_pool);
+		if (ret != 0) {
+			PMD_DRV_LOG(ERR,
+				"Port %u: Failed to re-create RX queue %u",
+				port_id, i);
+			return ret;
+		}
+	}
+
+	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		struct gve_txq_config *tx_cfg = &priv->txq_configs[i];
+
+		if (!tx_cfg->allocated)
+			continue;
+
+		ret = dev->dev_ops->tx_queue_setup(dev, i, tx_cfg->nb_descriptors,
+						   tx_cfg->socket_id,
+						   &tx_cfg->conf);
+		if (ret != 0) {
+			PMD_DRV_LOG(ERR,
+				"Port %u: Failed to re-create TX queue %u",
+				port_id, i);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static int
+gve_internal_recover_device(struct rte_eth_dev *dev)
+{
+	struct gve_priv *priv = dev->data->dev_private;
+	uint16_t port_id = dev->data->port_id;
+	uint16_t i;
+	int ret;
+
+	pthread_mutex_lock(&priv->reset_lock);
+
+	rte_eth_fp_ops[port_id].rx_pkt_burst = rte_eth_pkt_burst_dummy;
+	rte_eth_fp_ops[port_id].tx_pkt_burst = rte_eth_pkt_burst_dummy;
+	dev->rx_pkt_burst = rte_eth_pkt_burst_dummy;
+	dev->tx_pkt_burst = rte_eth_pkt_burst_dummy;
+	rte_wmb();
+
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		if (dev->data->rx_queues[i] != NULL) {
+			gve_add_zombie_rx_queue(priv,
+				dev->data->rx_queues[i]);
+			dev->data->rx_queues[i] = NULL;
+		}
+	}
+	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		if (dev->data->tx_queues[i] != NULL) {
+			gve_add_zombie_tx_queue(priv,
+				dev->data->tx_queues[i]);
+			dev->data->tx_queues[i] = NULL;
+		}
+	}
+
+	gve_stop_dev_status_polling(dev);
+
+	if (gve_is_gqi(priv))
+		gve_free_stats_report(dev);
+
+	priv->reset_generation++;
+
+	if (gve_get_control_plane_ok(priv))
+		priv->ctrl_ops->free_ctrl_plane(priv);
+	priv->num_registered_pages = 0;
+	ret = priv->ctrl_ops->init_ctrl_plane(priv);
+	if (ret != 0) {
+		PMD_DRV_LOG(ERR,
+			"Port %u: Failed to re-init control plane after reset",
+			port_id);
+		goto recover_fail;
+	}
+
+	ret = gve_configure_device_resources(priv);
+	if (ret != 0)
+		goto recover_fail;
+
+	ret = gve_recreate_queues(dev);
+	if (ret != 0)
+		goto recover_fail;
+
+	ret = gve_dev_start(dev);
+	if (ret != 0) {
+		PMD_DRV_LOG(ERR,
+			"Port %u: Failed to restart device after reset",
+			port_id);
+		goto recover_fail;
+	}
+
+	if (gve_is_gqi(priv)) {
+		gve_set_rx_function(dev);
+		gve_set_tx_function(dev);
+	} else {
+		gve_set_rx_function_dqo(dev);
+		gve_set_tx_function_dqo(dev);
+	}
+
+	rte_eth_fp_ops[port_id].rx_pkt_burst = dev->rx_pkt_burst;
+	rte_eth_fp_ops[port_id].tx_pkt_burst = dev->tx_pkt_burst;
+	rte_eth_fp_ops[port_id].rxq.data = dev->data->rx_queues;
+	rte_eth_fp_ops[port_id].txq.data = dev->data->tx_queues;
+	rte_wmb();
+
+	PMD_DRV_LOG(INFO, "Port %u: Proactive reset recovery successful",
+		port_id);
+	rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_RECOVERY_SUCCESS, NULL);
+
+	pthread_mutex_unlock(&priv->reset_lock);
+
+	return 0;
+
+recover_fail:
+	gve_free_queues(dev);
+
+	rte_eth_fp_ops[port_id].rx_pkt_burst = rte_eth_pkt_burst_dummy;
+	rte_eth_fp_ops[port_id].tx_pkt_burst = rte_eth_pkt_burst_dummy;
+
+	PMD_DRV_LOG(ERR, "Port %u: Proactive reset recovery failed",
+		port_id);
+	rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_RECOVERY_FAILED, NULL);
+
+	pthread_mutex_unlock(&priv->reset_lock);
+
+	return -EIO;
+}
+
 static void
 gve_check_device_status(void *arg)
 {
@@ -1782,23 +1838,31 @@ gve_check_device_status(void *arg)
 	struct gve_priv *priv = dev->data->dev_private;
 	int ret;
 
+	gve_clean_zombie_queues(priv, false);
+
 	if (priv->ctrl_ops->check_device_needs_reset &&
 	    priv->ctrl_ops->check_device_needs_reset(priv)) {
-		PMD_DRV_LOG(INFO,
-			"Device on port %u requests a reset. Stopping device status polling.",
+		PMD_DRV_LOG(NOTICE,
+			"Port %u: Device requested reset. Executing proactive recovery.",
 			dev->data->port_id);
-		rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_RESET,
-			NULL);
-	} else {
-		ret = rte_eal_alarm_set(GVE_DEV_POLL_INTERVAL_US,
-					gve_check_device_status, dev);
+
+		ret = gve_internal_recover_device(dev);
 		if (ret != 0) {
-			PMD_DRV_LOG(ERR,
-				"Port %u: Failed to re-arm alarm poller!",
+			PMD_DRV_LOG(WARNING,
+				"Port %u: Recovery attempt failed, will retry on next poll",
 				dev->data->port_id);
 		}
 	}
+
+	if (dev->data->dev_started) {
+		ret = rte_eal_alarm_set(GVE_DEV_POLL_INTERVAL_US,
+					gve_check_device_status, dev);
+		if (ret != 0)
+			PMD_DRV_LOG(ERR, "Port %u: Failed to re-arm alarm poller!",
+				dev->data->port_id);
+	}
 }
+
 
 static void
 gve_start_dev_status_polling(struct rte_eth_dev *dev)
@@ -1829,6 +1893,83 @@ gve_stop_dev_status_polling(struct rte_eth_dev *dev)
 	/* Blocks until all in-progress callbacks have completed. */
 	rte_eal_alarm_cancel(gve_check_device_status, dev);
 }
+
+static int
+gve_dev_reset(struct rte_eth_dev *dev)
+{
+	struct gve_priv *priv = dev->data->dev_private;
+	int ret;
+
+	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
+		PMD_DRV_LOG(ERR,
+			"Device reset on port %u not supported in secondary processes.",
+			dev->data->port_id);
+		return -EPERM;
+	}
+
+	pthread_mutex_lock(&priv->reset_lock);
+	ret = gve_internal_recover_device(dev);
+	pthread_mutex_unlock(&priv->reset_lock);
+
+	return ret;
+}
+
+static const struct eth_dev_ops gve_eth_dev_ops = {
+	.dev_configure        = gve_dev_configure,
+	.dev_start            = gve_dev_start,
+	.dev_stop             = gve_dev_stop,
+	.dev_close            = gve_dev_close,
+	.dev_reset            = gve_dev_reset,
+	.dev_infos_get        = gve_dev_info_get,
+	.rx_queue_setup       = gve_rx_queue_setup,
+	.tx_queue_setup       = gve_tx_queue_setup,
+	.rx_queue_release     = gve_rx_queue_release,
+	.tx_queue_release     = gve_tx_queue_release,
+	.rx_queue_start       = gve_rx_queue_start,
+	.tx_queue_start       = gve_tx_queue_start,
+	.rx_queue_stop        = gve_rx_queue_stop,
+	.tx_queue_stop        = gve_tx_queue_stop,
+	.flow_ops_get         = gve_flow_ops_get,
+	.link_update          = gve_link_update,
+	.stats_get            = gve_dev_stats_get,
+	.stats_reset          = gve_dev_stats_reset,
+	.mtu_set              = gve_dev_mtu_set,
+	.xstats_get           = gve_xstats_get,
+	.xstats_get_names     = gve_xstats_get_names,
+	.rss_hash_update      = gve_rss_hash_update,
+	.rss_hash_conf_get    = gve_rss_hash_conf_get,
+	.reta_update          = gve_rss_reta_update,
+	.reta_query           = gve_rss_reta_query,
+};
+
+static const struct eth_dev_ops gve_eth_dev_ops_dqo = {
+	.dev_configure        = gve_dev_configure,
+	.dev_start            = gve_dev_start,
+	.dev_stop             = gve_dev_stop,
+	.dev_close            = gve_dev_close,
+	.dev_reset            = gve_dev_reset,
+	.dev_infos_get        = gve_dev_info_get,
+	.rx_queue_setup       = gve_rx_queue_setup_dqo,
+	.tx_queue_setup       = gve_tx_queue_setup_dqo,
+	.rx_queue_release     = gve_rx_queue_release_dqo,
+	.tx_queue_release     = gve_tx_queue_release_dqo,
+	.rx_queue_start       = gve_rx_queue_start_dqo,
+	.tx_queue_start       = gve_tx_queue_start_dqo,
+	.rx_queue_stop        = gve_rx_queue_stop_dqo,
+	.tx_queue_stop        = gve_tx_queue_stop_dqo,
+	.flow_ops_get         = gve_flow_ops_get,
+	.link_update          = gve_link_update,
+	.stats_get            = gve_dev_stats_get,
+	.stats_reset          = gve_dev_stats_reset,
+	.mtu_set              = gve_dev_mtu_set,
+	.xstats_get           = gve_xstats_get,
+	.xstats_get_names     = gve_xstats_get_names,
+	.rss_hash_update      = gve_rss_hash_update,
+	.rss_hash_conf_get    = gve_rss_hash_conf_get,
+	.reta_update          = gve_rss_reta_update,
+	.reta_query           = gve_rss_reta_query,
+	.read_clock           = gve_read_clock,
+};
 
 static int
 gve_adminq_get_device_properties(struct gve_priv *priv)
