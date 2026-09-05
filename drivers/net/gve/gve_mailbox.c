@@ -1122,8 +1122,10 @@ gve_mbx_link_change_thread(void *arg)
 	PMD_DRV_LOG(INFO, "Link status updated over mailbox: status=%u, speed=%" PRIu64 " Mbps",
 		    priv->link_status, priv->link_speed);
 
-	if (priv->eth_dev != NULL)
+	if (priv->eth_dev != NULL) {
+		priv->eth_dev->dev_ops->link_update(priv->eth_dev, 0);
 		rte_eth_dev_callback_process(priv->eth_dev, RTE_ETH_EVENT_INTR_LSC, NULL);
+	}
 
 out:
 	rte_atomic_store_explicit(&mbx->link_thread_running, false,
