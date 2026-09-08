@@ -315,36 +315,30 @@ static void gve_mbx_msg_comp_init(struct gve_mbx_msg *msg)
 	pthread_mutex_unlock(&msg->comp.mutex);
 }
 
-static void gve_mbx_rx_poll(struct gve_mailbox *mbx);
-
-static int gve_mbx_wait_for_completion(struct gve_mailbox *mbx,
-				       struct gve_mbx_msg *msg,
+static int gve_mbx_wait_for_completion(struct gve_mbx_msg *msg,
 				       uint64_t timeout_ms)
 {
-	uint64_t start_time = rte_get_timer_cycles();
-	uint64_t timeout_cycles = timeout_ms * rte_get_timer_hz() / 1000;
-	int status;
+	struct timespec ts;
 	int err = 0;
+	int ret = 0;
 
-	while (1) {
-		gve_mbx_rx_poll(mbx);
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts = rte_ns_to_timespec(rte_timespec_to_ns(&ts) + timeout_ms * 1000000);
 
-		pthread_mutex_lock(&msg->comp.mutex);
-		status = msg->status;
-		pthread_mutex_unlock(&msg->comp.mutex);
-
-		if (status != GVE_MBX_STATUS_UNSET)
-			break;
-
-		if ((rte_get_timer_cycles() - start_time) > timeout_cycles) {
+	pthread_mutex_lock(&msg->comp.mutex);
+	while (ret || msg->status == GVE_MBX_STATUS_UNSET) {
+		ret = pthread_cond_timedwait(&msg->comp.cond, &msg->comp.mutex,
+					     &ts);
+		/* Only exit on timeout error. */
+		if (ret == ETIMEDOUT) {
 			err = ETIMEDOUT;
-			return -err;
+			goto ret;
 		}
-
-		rte_delay_us_sleep(20);
 	}
 
-	err = gve_mbx_get_err_from_status(status);
+	err = gve_mbx_get_err_from_status(msg->status);
+ret:
+	pthread_mutex_unlock(&msg->comp.mutex);
 	return -err;
 }
 
@@ -929,9 +923,9 @@ static int gve_mbx_send_msg(struct gve_mailbox *mbx, uint32_t opcode,
 	return 0;
 }
 
-bool gve_mbx_in_reset(struct gve_mailbox *mbx)
+static bool gve_mbx_in_reset(struct gve_mailbox *mbx)
 {
-	if (!mbx || !mbx->rx)
+	if (!mbx->rx)
 		return true;
 
 	return !(rte_read32(&mbx->rx->reg->queue_len) & GVE_MBX_RX_LEN_M);
@@ -1001,7 +995,7 @@ static int gve_mbx_send_msg_wait(struct gve_mailbox *mbx, uint32_t opcode,
 
 	rte_spinlock_unlock(&mbx->msg_queue->mbx_msg_q_lock);
 
-	err = gve_mbx_wait_for_completion(mbx, mbx_msg,
+	err = gve_mbx_wait_for_completion(mbx_msg,
 					  mbx->msg_queue->msg_timeout_ms);
 
 	rte_spinlock_lock(&mbx->msg_queue->mbx_msg_q_lock);
