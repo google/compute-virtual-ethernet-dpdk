@@ -947,6 +947,20 @@ static int gve_mbx_get_free_send_idx(struct gve_mbx_msg_queue *mbx_msg_queue,
 	return 0;
 }
 
+static bool gve_mbx_msg_is_setup_op(uint32_t opcode)
+{
+	switch(opcode) {
+	case GVE_MBX_NEGOTIATE_CAPABILITIES:
+	case GVE_MBX_GET_INFO_FLOW_STEERING:
+	case GVE_MBX_GET_INFO_NIC_TSTAMP_REG:
+	case GVE_MBX_GET_INTERRUPT_DBS:
+	case GVE_MBX_GET_PTYPE_MAP:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static int gve_mbx_send_msg_wait(struct gve_mailbox *mbx, uint32_t opcode,
 				 uint16_t msg_bytes, uint8_t *msg)
 {
@@ -954,11 +968,19 @@ static int gve_mbx_send_msg_wait(struct gve_mailbox *mbx, uint32_t opcode,
 	u16 cookie, index = 0;
 	int err;
 
+	if (!mbx || !mbx->priv)
+		return -EIO;
+
 	if (gve_mbx_in_reset(mbx)) {
 		PMD_DRV_LOG(ERR,
 			    "Mailbox reset detected, cannot send mbx msg");
 		return -EIO;
 	}
+
+
+	if (!gve_mbx_msg_is_setup_op(opcode) &&
+	    !gve_get_device_resources_ok(mbx->priv))
+		return -EIO;
 
 	if (!gve_get_control_plane_ok(mbx->priv))
 		return -EIO;
