@@ -752,14 +752,6 @@ gve_dev_stop(struct rte_eth_dev *dev)
 		return -EPERM;
 	}
 
-	/*
-	 * Block until all polling callbacks have concluded before tearing down
-	 * any device resources. Do so before trying to acquire the reset lock
-	 * because a polling callback could be invoking a reset which will
-	 * itself try to acquire the lock.
-	 */
-	gve_stop_dev_status_polling(dev);
-
 	pthread_mutex_lock(&priv->reset_lock);
 
 	dev->data->dev_started = 0;
@@ -910,6 +902,15 @@ gve_dev_close(struct rte_eth_dev *dev)
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
+
+	/*
+	 * Block until all polling callbacks have concluded before tearing down
+	 * any device resources. Do so before trying to acquire the reset lock
+	 * in gve_dev_stop() because a polling callback could be invoking a
+	 * reset which will itself try to acquire the lock, leading to a
+	 * deadlock.
+	 */
+	gve_stop_dev_status_polling(dev);
 
 	if (dev->data->dev_started) {
 		err = gve_dev_stop(dev);
