@@ -1763,6 +1763,8 @@ gve_internal_recover_device(struct rte_eth_dev *dev)
 
 	priv->reset_generation++;
 
+	gve_deconfigure_device_resources(priv);
+
 	if (gve_get_control_plane_ok(priv))
 		priv->ctrl_ops->free_ctrl_plane(priv);
 	priv->num_registered_pages = 0;
