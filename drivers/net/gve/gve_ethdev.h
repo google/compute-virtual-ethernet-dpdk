@@ -66,7 +66,7 @@
 	RTE_ETH_RSS_NONFRAG_IPV6_UDP |	\
 	RTE_ETH_RSS_IPV6_UDP_EX)
 
-#define GVE_DEV_POLL_INTERVAL_US (1 * 1000 * 1000) /* 1 second in microseconds */
+#define GVE_DEV_POLL_INTERVAL_US (100 * 1000) /* 100ms in microseconds */
 
 /* A list of pages registered with the device during setup and used by a queue
  * as buffers
@@ -384,6 +384,7 @@ struct gve_priv {
 	struct gve_tx_queue **zombie_tx_queues;
 	rte_spinlock_t zombie_lock;
 
+	rte_thread_t dev_status_thread;
 	pthread_mutex_t reset_lock;
 
 	uint16_t tx_queue_watchdog_timeout_ms;
@@ -597,6 +598,32 @@ gve_clear_flow_subsystem_ok(struct gve_priv *priv)
 {
 	rte_atomic_thread_fence(rte_memory_order_release);
 	rte_bit_relaxed_clear32(GVE_PRIV_FLAGS_FLOW_SUBSYSTEM_OK,
+				&priv->state_flags);
+}
+
+static inline bool
+gve_get_dev_status_poller_ok(struct gve_priv *priv) {
+	bool ret;
+
+	ret = !!rte_bit_relaxed_get32(GVE_PRIV_FLAGS_STATUS_POLLER_OK,
+				      &priv->state_flags);
+	rte_atomic_thread_fence(rte_memory_order_acquire);
+	return ret;
+}
+
+static inline void
+gve_set_dev_status_poller_ok(struct gve_priv *priv)
+{
+	rte_atomic_thread_fence(rte_memory_order_release);
+	rte_bit_relaxed_set32(GVE_PRIV_FLAGS_STATUS_POLLER_OK,
+			      &priv->state_flags);
+}
+
+static inline void
+gve_clear_dev_status_poller_ok(struct gve_priv *priv)
+{
+	rte_atomic_thread_fence(rte_memory_order_release);
+	rte_bit_relaxed_clear32(GVE_PRIV_FLAGS_STATUS_POLLER_OK,
 				&priv->state_flags);
 }
 

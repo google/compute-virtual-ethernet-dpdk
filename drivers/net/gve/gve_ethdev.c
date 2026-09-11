@@ -599,7 +599,6 @@ gve_dev_start(struct rte_eth_dev *dev)
 		}
 	}
 
-	gve_start_dev_status_polling(dev);
 	ret = 0;
 
 unlock_and_return:
@@ -910,7 +909,8 @@ gve_dev_close(struct rte_eth_dev *dev)
 	 * reset which will itself try to acquire the lock, leading to a
 	 * deadlock.
 	 */
-	gve_stop_dev_status_polling(dev);
+	if (gve_get_dev_status_poller_ok(priv))
+		gve_stop_dev_status_polling(dev);
 
 	if (dev->data->dev_started) {
 		err = gve_dev_stop(dev);
@@ -1737,8 +1737,6 @@ gve_internal_recover_device(struct rte_eth_dev *dev)
 	uint16_t i;
 	int ret;
 
-	pthread_mutex_lock(&priv->reset_lock);
-
 	rte_eth_fp_ops[port_id].rx_pkt_burst = rte_eth_pkt_burst_dummy;
 	rte_eth_fp_ops[port_id].tx_pkt_burst = rte_eth_pkt_burst_dummy;
 	dev->rx_pkt_burst = rte_eth_pkt_burst_dummy;
@@ -1759,8 +1757,6 @@ gve_internal_recover_device(struct rte_eth_dev *dev)
 			dev->data->tx_queues[i] = NULL;
 		}
 	}
-
-	gve_stop_dev_status_polling(dev);
 
 	if (gve_is_gqi(priv))
 		gve_free_stats_report(dev);
@@ -1823,8 +1819,6 @@ gve_internal_recover_device(struct rte_eth_dev *dev)
 		port_id);
 	rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_RECOVERY_SUCCESS, NULL);
 
-	pthread_mutex_unlock(&priv->reset_lock);
-
 	return 0;
 
 recover_fail:
@@ -1836,22 +1830,30 @@ recover_fail:
 	PMD_DRV_LOG(ERR, "Port %u: Proactive reset recovery failed", port_id);
 	rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_RECOVERY_FAILED, NULL);
 
-	pthread_mutex_unlock(&priv->reset_lock);
-
 	return -EIO;
 }
 
-static void
+static unsigned int
 gve_check_device_status(void *arg)
 {
 	struct rte_eth_dev *dev = arg;
 	struct gve_priv *priv = dev->data->dev_private;
+	const struct gve_ctrl_ops *ops = priv->ctrl_ops;
 	int ret;
 
-	gve_clean_zombie_queues(priv, false);
+	while(gve_get_dev_status_poller_ok(priv)) {
+		gve_clean_zombie_queues(priv, false);
 
-	if (priv->ctrl_ops->check_device_needs_reset &&
-	    priv->ctrl_ops->check_device_needs_reset(priv)) {
+		if (!ops->check_device_needs_reset(priv))
+			goto sleep;
+
+		pthread_mutex_lock(&priv->reset_lock);
+
+		/* Depend against TOCTOU by checking if a reset is still needed
+		 * after acquiring the lock. */
+		if (!ops->check_device_needs_reset(priv))
+			goto unlock;
+
 		PMD_DRV_LOG(NOTICE,
 			"Port %u: Device requested reset. Executing proactive recovery.",
 			dev->data->port_id);
@@ -1862,32 +1864,30 @@ gve_check_device_status(void *arg)
 				"Port %u: Recovery attempt failed, will retry on next poll",
 				dev->data->port_id);
 		}
+unlock:
+		pthread_mutex_unlock(&priv->reset_lock);
+sleep:
+		rte_delay_us_sleep(GVE_DEV_POLL_INTERVAL_US);
 	}
 
-	if (dev->data->dev_started) {
-		ret = rte_eal_alarm_set(GVE_DEV_POLL_INTERVAL_US,
-					gve_check_device_status, dev);
-		if (ret != 0)
-			PMD_DRV_LOG(ERR,
-				    "Port %u: Failed to re-arm alarm poller!",
-				    dev->data->port_id);
-	}
+	return 0;
 }
-
 
 static void
 gve_start_dev_status_polling(struct rte_eth_dev *dev)
 {
+	struct gve_priv *priv = dev->data->dev_private;
 	int ret;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return;
 
-	ret = rte_eal_alarm_set(GVE_DEV_POLL_INTERVAL_US,
-				gve_check_device_status,
-				dev);
-
+	gve_set_dev_status_poller_ok(priv);
+	ret = rte_thread_create_internal_control(&priv->dev_status_thread,
+					   "gve-dev-status",
+					   gve_check_device_status, dev);
 	if (ret != 0) {
+		gve_clear_dev_status_poller_ok(priv);
 		PMD_DRV_LOG(ERR,
 			"Port %u: Failed to arm device reset polling alarm! Err=%d",
 			dev->data->port_id, ret);
@@ -1901,8 +1901,12 @@ gve_start_dev_status_polling(struct rte_eth_dev *dev)
 static void
 gve_stop_dev_status_polling(struct rte_eth_dev *dev)
 {
+	struct gve_priv *priv = dev->data->dev_private;
+
 	/* Blocks until all in-progress callbacks have completed. */
-	rte_eal_alarm_cancel(gve_check_device_status, dev);
+	gve_clear_dev_status_poller_ok(priv);
+
+	rte_thread_join(priv->dev_status_thread, NULL);
 }
 
 static int
@@ -1918,9 +1922,11 @@ gve_dev_reset(struct rte_eth_dev *dev)
 		return -EPERM;
 	}
 
+	gve_stop_dev_status_polling(dev);
 	pthread_mutex_lock(&priv->reset_lock);
 	ret = gve_internal_recover_device(dev);
 	pthread_mutex_unlock(&priv->reset_lock);
+	gve_start_dev_status_polling(dev);
 
 	return ret;
 }
@@ -2230,6 +2236,7 @@ gve_dev_init(struct rte_eth_dev *eth_dev)
 	}
 
 	eth_dev->data->mac_addrs = &priv->dev_addr;
+	gve_start_dev_status_polling(eth_dev);
 
 	return 0;
 }

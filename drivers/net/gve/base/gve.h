@@ -84,6 +84,7 @@ enum gve_state_flags_bit {
 	GVE_PRIV_FLAGS_FLOW_SUBSYSTEM_OK	= 4,
 	GVE_PRIV_FLAGS_NAPI_ENABLED		= 5,
 	GVE_PRIV_FLAGS_MAILBOX_OK		= 6,
+	GVE_PRIV_FLAGS_STATUS_POLLER_OK		= 7,
 };
 
 enum gve_rss_hash_algorithm {
