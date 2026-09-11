@@ -112,7 +112,7 @@ gve_clean_zombie_queues(struct gve_priv *priv, bool force)
 	struct gve_tx_queue *txq;
 	int i;
 
-	if (!priv)
+	if (!priv || !priv->zombie_rx_queues || !priv->zombie_tx_queues)
 		return;
 
 	for (i = 0; i < priv->max_nb_rxq; i++) {
