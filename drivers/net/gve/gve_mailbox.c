@@ -592,6 +592,7 @@ gve_mbx_process_config_tx_queues_resp(struct gve_mailbox *mbx,
 		if (q_id < priv->max_nb_txq && priv->txqs[q_id] != NULL) {
 			priv->txqs[q_id]->qtx_tail =
 				(rte_be32_t __iomem *)((uint8_t *)priv->db_bar + tail_db_offset);
+			rte_write32(0, priv->txqs[q_id]->qtx_tail);
 		}
 	}
 	return 0;
@@ -615,6 +616,7 @@ gve_mbx_process_config_rx_queues_resp(struct gve_mailbox *mbx,
 		if (q_id < priv->max_nb_rxq && priv->rxqs[q_id] != NULL) {
 			priv->rxqs[q_id]->qrx_tail =
 				(rte_be32_t __iomem *)((uint8_t *)priv->db_bar + tail_db_offset);
+			rte_write32(0, priv->rxqs[q_id]->qrx_tail);
 		}
 	}
 	return 0;
