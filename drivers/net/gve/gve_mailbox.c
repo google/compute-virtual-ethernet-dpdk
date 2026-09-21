@@ -1385,6 +1385,9 @@ static int gve_mbx_process_capabilities(struct gve_priv *priv)
 	if (priv->negotiated_caps & GVE_MBX_CAP_FLOW_STEERING)
 		err = gve_mbx_get_info_flow_steering(priv);
 
+	if (priv->negotiated_caps & GVE_MBX_CAP_NIC_TSTAMP_REG)
+		gve_mbx_get_info_nic_tstamp_reg(priv);
+
 	return err;
 }
 

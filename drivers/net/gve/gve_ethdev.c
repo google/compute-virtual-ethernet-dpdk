@@ -2049,7 +2049,6 @@ static const struct gve_ctrl_ops gve_mailbox_ops = {
 	.configure_device_resources = gve_mbx_get_interrupt_dbs,
 	.get_ptype_map = gve_mbx_get_ptype_map,
 	.report_link_speed = gve_mbx_report_link_speed,
-	.get_info_nic_tstamp_reg = gve_mbx_get_info_nic_tstamp_reg,
 	.create_tx_queues = gve_mbx_create_tx_queues,
 	.destroy_tx_queues = gve_mbx_destroy_tx_queues,
 	.create_rx_queues = gve_mbx_create_rx_queues,
